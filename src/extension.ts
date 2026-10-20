@@ -1,0 +1,165 @@
+import { FSWatcher, existsSync, readdirSync, watch } from 'node:fs';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import * as vscode from 'vscode';
+import { Collector } from './collector';
+import { focusFirst } from './focus';
+import { defaultClaudeRoot, paths } from './paths';
+import { bridgeCommand, pickNodeBinary, planStatusLineInstall } from './settingsPlan';
+import { UsageStatusBar } from './statusBar';
+import { UsageSnapshot } from './types';
+import { UsageViewProvider, ViewMessage } from './usageView';
+import { buildViewModel } from './viewModel';
+
+export function activate(context: vscode.ExtensionContext): void {
+  const root = defaultClaudeRoot();
+  const p = paths(root);
+  const collector = new Collector(root);
+  const statusBar = new UsageStatusBar();
+  const log = vscode.window.createOutputChannel('Claude Usage');
+  let latest: UsageSnapshot | undefined;
+  const onMessage = (m: ViewMessage) => {
+    if (m.type === 'refresh') void refresh();
+    if (m.type === 'install') void vscode.commands.executeCommand('claudeUsage.installBridge');
+    if (m.type === 'open') void vscode.commands.executeCommand('claudeUsage.openTranscript', m.id);
+  };
+  // The same usage view lives in the left activity bar and the right secondary side bar.
+  const views = ['claudeUsage.view', 'claudeUsage.sideView'].map((id) => new UsageViewProvider(id, onMessage));
+  context.subscriptions.push(statusBar, log, ...views.map((v) => vscode.window.registerWebviewViewProvider(v.id, v)));
+
+  const config = () => vscode.workspace.getConfiguration('claudeUsage');
+  let running = false;
+  const refresh = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+      const snap = await collector.collect(folders, config().get<'workspace' | 'all'>('scope', 'workspace'), Date.now());
+      latest = snap;
+      const vm = buildViewModel(snap, config().get<number>('warnAt', 80));
+      for (const v of views) v.update(vm);
+      statusBar.update(vm, snap);
+    } catch (e) {
+      log.appendLine(`[${new Date().toISOString()}] refresh failed: ${e instanceof Error ? e.stack : String(e)}`);
+    } finally {
+      running = false;
+    }
+  };
+
+  let timer: NodeJS.Timeout | undefined;
+  const schedule = () => {
+    if (timer) clearInterval(timer);
+    timer = setInterval(refresh, Math.max(2, config().get<number>('refreshSeconds', 10)) * 1000);
+  };
+  schedule();
+  context.subscriptions.push({ dispose: () => timer && clearInterval(timer) });
+
+  // The bridge rewrites its snapshot on every status line refresh; react quickly to new quota numbers.
+  let watcher: FSWatcher | undefined;
+  let debounce: NodeJS.Timeout | undefined;
+  const ensureWatcher = () => {
+    if (watcher || !existsSync(p.bridgeSnapshots)) return;
+    try {
+      watcher = watch(p.bridgeSnapshots, () => {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(refresh, 500);
+      });
+    } catch (e) {
+      log.appendLine(`watch failed: ${String(e)}`);
+    }
+  };
+  ensureWatcher();
+  const watchRetry = setInterval(ensureWatcher, 60_000);
+  context.subscriptions.push({
+    dispose: () => {
+      watcher?.close();
+      clearInterval(watchRetry);
+      if (debounce) clearTimeout(debounce);
+    },
+  });
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('claudeUsage')) return;
+      schedule();
+      void refresh();
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => void refresh()),
+    vscode.commands.registerCommand('claudeUsage.refresh', refresh),
+    vscode.commands.registerCommand('claudeUsage.show', async () => {
+      if (await focusFirst(['claudeUsage.sideView', 'claudeUsage.view'], (c) => vscode.commands.executeCommand(c))) return;
+      const choice = await vscode.window.showWarningMessage(
+        'Claude Usage was updated, but this window still has the old layout. Reload the window to show the usage panel.',
+        'Reload Window',
+      );
+      if (choice) await vscode.commands.executeCommand('workbench.action.reloadWindow');
+    }),
+    vscode.commands.registerCommand('claudeUsage.openTranscript', async (sessionId?: string) => {
+      const path = latest?.sessions.find((s) => s.sessionId === sessionId)?.transcriptPath;
+      if (path) await vscode.window.showTextDocument(vscode.Uri.file(path), { preview: true });
+    }),
+    vscode.commands.registerCommand('claudeUsage.installBridge', async () => {
+      await installBridge(context, p, log);
+      ensureWatcher();
+      await refresh();
+    }),
+  );
+
+  void refresh();
+}
+
+function nodeCandidates(): string[] {
+  const asdf = join(homedir(), '.asdf', 'installs', 'nodejs');
+  let versions: string[] = [];
+  try {
+    versions = readdirSync(asdf).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  } catch {
+    // no asdf
+  }
+  return ['/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node', ...versions.map((v) => join(asdf, v, 'bin', 'node'))];
+}
+
+async function installBridge(context: vscode.ExtensionContext, p: ReturnType<typeof paths>, log: vscode.OutputChannel) {
+  const command = bridgeCommand(pickNodeBinary(nodeCandidates(), existsSync), p.installedBridge);
+  let current: string | undefined;
+  try {
+    current = await readFile(p.settings, 'utf8');
+  } catch {
+    current = undefined;
+  }
+
+  // Refresh the script copy even when already installed, so extension updates reach it.
+  await mkdir(p.monitor, { recursive: true });
+  await copyFile(context.asAbsolutePath(join('bridge', 'statusline-bridge.js')), p.installedBridge);
+
+  const plan = planStatusLineInstall(current, command);
+  switch (plan.action) {
+    case 'already':
+      void vscode.window.showInformationMessage('Claude Usage: the status line bridge is already installed (script refreshed).');
+      return;
+    case 'invalid':
+      void vscode.window.showErrorMessage(`Claude Usage: ${p.settings} is not valid JSON, so it was left untouched.`);
+      return;
+    case 'conflict':
+      log.appendLine(`Existing statusLine: ${plan.existing}\nBridge command: ${command}`);
+      log.show(true);
+      void vscode.window.showWarningMessage(
+        'Claude Usage: you already have a status line command, so it was not replaced. To enable the 5h quota, pipe the same stdin into the bridge from your script (both commands are in the "Claude Usage" output).',
+      );
+      return;
+    case 'install': {
+      const ok = await vscode.window.showInformationMessage(
+        `Set Claude Code's statusLine to the usage bridge?\n\n${command}\n\nIt shows "5h 42% · ctx 31%" in Claude Code and saves the quota for this extension. ${p.settings} is backed up first.`,
+        { modal: true },
+        'Install',
+      );
+      if (ok !== 'Install') return;
+      if (current !== undefined) await writeFile(`${p.settings}.bak-claude-usage`, current);
+      await writeFile(p.settings, plan.text);
+      void vscode.window.showInformationMessage('Claude Usage: bridge installed. The quota appears after the next Claude response.');
+    }
+  }
+}
+
+export function deactivate(): void {}

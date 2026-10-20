@@ -1,0 +1,131 @@
+{
+  "name": "claude-usage-monitor",
+  "displayName": "Claude Usage Monitor",
+  "description": "Local per-conversation Claude Code token usage and the 5-hour quota, in the status bar and a sidebar.",
+  "version": "0.3.1",
+  "publisher": "hulsambath",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeUsage.show",
+        "title": "Show Usage",
+        "category": "Claude Usage"
+      },
+      {
+        "command": "claudeUsage.refresh",
+        "title": "Refresh",
+        "category": "Claude Usage",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "claudeUsage.installBridge",
+        "title": "Install Status Line Bridge (enables 5h quota)",
+        "category": "Claude Usage"
+      },
+      {
+        "command": "claudeUsage.openTranscript",
+        "title": "Open Transcript",
+        "category": "Claude Usage",
+        "icon": "$(go-to-file)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudeUsage",
+          "title": "Claude Usage",
+          "icon": "media/claude-usage.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "claudeUsageRight",
+          "title": "Claude Usage",
+          "icon": "media/claude-usage.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeUsage": [
+        {
+          "type": "webview",
+          "id": "claudeUsage.view",
+          "name": "Usage"
+        }
+      ],
+      "claudeUsageRight": [
+        {
+          "type": "webview",
+          "id": "claudeUsage.sideView",
+          "name": "Usage"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "claudeUsage.refresh",
+          "when": "view == claudeUsage.view || view == claudeUsage.sideView",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "claudeUsage.openTranscript",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Usage",
+      "properties": {
+        "claudeUsage.refreshSeconds": {
+          "type": "number",
+          "default": 10,
+          "minimum": 2,
+          "description": "How often to re-read ~/.claude."
+        },
+        "claudeUsage.scope": {
+          "type": "string",
+          "enum": [
+            "workspace",
+            "all"
+          ],
+          "default": "workspace",
+          "description": "List conversations of this workspace only, or all of them."
+        },
+        "claudeUsage.warnAt": {
+          "type": "number",
+          "default": 80,
+          "description": "5h quota percentage at which the status bar turns to a warning colour."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -p . -w",
+    "test": "vitest run",
+    "typecheck": "tsc -p . --noEmit",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "~1.90.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

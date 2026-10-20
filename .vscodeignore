@@ -1,0 +1,9 @@
+.vscode/**
+src/**
+test/**
+docs/**
+node_modules/**
+**/*.map
+tsconfig.json
+vitest.config.ts
+.tool-versions
