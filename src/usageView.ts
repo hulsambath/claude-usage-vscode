@@ -3,7 +3,11 @@ import * as vscode from 'vscode';
 import { renderBody } from './render';
 import { ViewModel } from './viewModel';
 
-export type ViewMessage = { type: 'ready' | 'refresh' | 'install' | 'open'; id?: string };
+export type ViewMessage = {
+  type: 'ready' | 'refresh' | 'install' | 'open' | 'handoff' | 'saveHandoff' | 'filter';
+  id?: string;
+  filter?: 'all' | 'claude' | 'antigravity';
+};
 
 const STYLE = `
 :root {
@@ -45,6 +49,29 @@ h1, h2 { margin: 0; font-weight: 600; }
 .note { margin-top: 14px; padding: 8px 10px; border-radius: 4px; background: var(--vscode-textBlockQuote-background, var(--track)); }
 .note button { margin-top: 8px; }
 
+.badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; display: inline-flex; align-items: center; }
+.badge.claude { background: rgba(215, 120, 50, 0.15); color: #e0884c; border: 1px solid rgba(215, 120, 50, 0.3); }
+.badge.antigravity { background: rgba(76, 143, 224, 0.15); color: #4c8fe0; border: 1px solid rgba(76, 143, 224, 0.3); }
+
+.agy-card { margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: var(--vscode-textBlockQuote-background, var(--track)); border-left: 3px solid #4c8fe0; }
+.agy-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+
+.bridge-card { margin-top: 14px; padding: 10px 12px; border-radius: 6px; background: rgba(76, 143, 224, 0.08); border: 1px solid rgba(76, 143, 224, 0.25); }
+.bridge-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+.bridge-badge { color: var(--fg); }
+.bridge-target { color: var(--link); }
+.bridge-desc { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.bridge-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-primary { font-size: 11px; padding: 3px 8px; border-radius: 3px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.btn-primary:hover { background: var(--vscode-button-hoverBackground); }
+.btn-subtle { font-size: 11px; padding: 3px 8px; border-radius: 3px; background: var(--track); color: var(--fg); border: 1px solid var(--line); }
+.btn-subtle:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.15)); }
+
+.filter-tabs { display: flex; gap: 4px; margin: 10px 0 6px; overflow-x: auto; }
+.tab-btn { font-size: 11px; padding: 3px 8px; border-radius: 12px; background: var(--track); color: var(--muted); border: 1px solid transparent; cursor: pointer; }
+.tab-btn:hover { color: var(--fg); }
+.tab-btn.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+
 .list-head { display: flex; justify-content: space-between; align-items: baseline;
   margin: 22px 0 4px; padding-top: 14px; border-top: 1px solid var(--line); }
 .list-head h2 { font-size: 12px; color: var(--muted); }
@@ -62,6 +89,7 @@ h1, h2 { margin: 0; font-weight: 600; }
 .state-closed .dot { border: 1.5px solid var(--line); }
 .title { margin: 2px 0 0 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta { margin-left: 16px; color: var(--muted); font-size: 12px; }
+.files-tag { font-size: 11px; color: var(--muted); }
 .ctx { margin: 6px 0 0 16px; font-size: 12px; color: var(--muted); }
 .ctx .track { margin-bottom: 3px; }
 details { margin: 6px 0 0 16px; }
@@ -69,6 +97,7 @@ summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 6px 0; font-size: 12px; }
 dt { color: var(--muted); }
 dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.session-actions { display: flex; gap: 10px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .empty { color: var(--muted); padding: 8px 0; }
 
 button { font: inherit; font-size: 12px; cursor: pointer; border: 0; border-radius: 2px; padding: 4px 10px;
@@ -98,7 +127,7 @@ window.addEventListener('message', (e) => {
 });
 root.addEventListener('click', (e) => {
   const b = e.target.closest('[data-action]');
-  if (b) vscode.postMessage({ type: b.dataset.action, id: b.dataset.id });
+  if (b) vscode.postMessage({ type: b.dataset.action, id: b.dataset.id, filter: b.dataset.filter });
 });
 vscode.postMessage({ type: 'ready' });
 `;

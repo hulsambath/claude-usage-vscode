@@ -1,41 +1,59 @@
-# Claude Usage Monitor
+# Claude & Antigravity Usage Monitor + Context Bridge
 
-A local-only VS Code extension that shows Claude Code usage per conversation window and the subscription's 5-hour quota.
+A local-only VS Code extension that tracks **Claude Code** and **Antigravity** AI token usage, session activity, context window limits, and solves context loss when switching between agents with a **1-click Cross-Agent Context Bridge**.
 
-![Claude Usage Monitor: the quota card and conversation list in the side bar, with the status bar item and its tooltip](docs/preview.png)
+![Claude & Antigravity Usage Monitor: quota card, multi-agent conversations list, and context bridge](docs/preview.png)
 
-- **Status bar:** `34% left · ~25.9M tok · 2h 23m`: share of the 5-hour quota left, estimated tokens left, time to reset. It turns yellow at `claudeUsage.warnAt` (80%), and also earlier if your current pace would hit the limit before the reset. It turns red at 95%.
-- **Sidebar (gauge icon):** in both the left activity bar and the right secondary side bar (open it with ⌥⌘B). The status bar item and **Claude Usage: Show Usage** open the right-hand one.
-  - **Quota.** The headline is what's left. Below it are two bars: quota used, and time passed in the 5-hour window. If the quota bar is ahead of the time bar, you're spending faster than the window refills.
-    - "About 25.9M tokens left of roughly 76.3M" is estimated from the tokens this Mac used inside the official window.
-    - A pace sentence follows, e.g. "At this pace you'll hit the limit around 03:47" or "…finish with about 30% to spare".
-    - The weekly bar sits underneath.
-  - **Conversations.** One entry per Claude Code window: working (pulsing blue), idle, or closed. Each shows its tokens and context tokens left (e.g. "813.4k of 1.0M"). A collapsible token breakdown lists input / output / cache / replies / per model, plus *Open transcript*.
-
-The tokens-left number assumes your recent mix of input, output and cache tokens stays the same. The quota also counts usage outside this Mac (claude.ai, other machines), so treat the token figure as a guide. The percentage is the official number.
+- **Cross-Agent Context Bridge (No More Missing Context):**
+  - When switching between Claude Code and Antigravity, click **📋 Copy Handoff Prompt** or **💾 Save Bridge File (`.agent-handoff.md`)**.
+  - Automatically extracts:
+    - User goal & initial instructions
+    - Files modified / created in the session
+    - Terminal commands executed
+    - Latest agent reasoning, findings, and current state
+    - Clean markdown instructions tailored for the receiving agent
+- **Multi-Agent Monitoring:**
+  - Full support for both Claude Code (`~/.claude`) and Antigravity (`~/.gemini/antigravity-cli`).
+  - Filter tabs in the sidebar: `All Agents` | `Claude` | `Antigravity`.
+  - Visual badges distinguishing each agent with status indicators (Working/Busy, Idle, Closed).
+- **Status bar:** `34% left · AGY 326k · 2h 23m`: Shows live status for Claude quota, Antigravity activity, combined tokens, and active working state.
+- **Sidebar (gauge icon):**
+  - **Quota & Usage:** Claude's 5-hour quota gauge + Antigravity's 5-hour token metrics and active session counts.
+  - **Conversations:** Real-time list of all open and recent conversations from both agents. Each card displays tokens, context window usage (e.g. "813.4k of 1.0M context tokens left"), modified files count, and expandable breakdown with 1-click **Open transcript** and **Handoff to other agent**.
 
 ## Where the numbers come from
 
-Everything is read from `~/.claude`. There are no network calls and no credentials are read.
+Everything is read purely locally from your machine:
 
 | Data | Source |
 |---|---|
-| Open windows | `~/.claude/sessions/<pid>.json` (dead pids ignored) |
-| Tokens per conversation | `~/.claude/projects/*/<session>.jsonl` + `<session>/subagents/*.jsonl`, deduplicated by message id |
-| 5h / 7d quota, context tokens | Claude Code only gives these to its **status line command**. `bridge/statusline-bridge.js` saves them to `~/.claude/usage-monitor/sessions/<session>.json` |
+| Claude Open windows | `~/.claude/sessions/<pid>.json` (dead pids ignored) |
+| Claude Tokens per conversation | `~/.claude/projects/*/<session>.jsonl` + `<session>/subagents/*.jsonl` |
+| Claude 5h / 7d quota, context | `bridge/statusline-bridge.js` writing to `~/.claude/usage-monitor/sessions/<session>.json` |
+| Antigravity Sessions & Status | `~/.gemini/antigravity-cli/conversation_summaries.db` + `presence/*.lock` |
+| Antigravity Tokens & Context | `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` |
+| Files Touched & Actions | Parsed directly from transcript tool calls (`write_file`, `edit_file`, `Edit`, `Write`, `Bash`, `run_command`) |
 
-Run **Claude Usage: Install Status Line Bridge** once. It copies the bridge to `~/.claude/usage-monitor/`, backs up `settings.json` to `settings.json.bak-claude-usage`, and sets `statusLine` to an absolute node path. Version-manager shims fail in folders with no version set, which is why it uses an absolute path. It never replaces an existing status line. The quota appears after the next Claude response.
+## Commands
 
-The local 5h window is an estimate in the style of ccusage: it starts at your first message, rounded down to the hour, and lasts 5 h. It counts tokens, not the official percentage.
+- **AI Usage: Show Usage**: Focuses the usage and context sidebar.
+- **AI Usage: Copy Agent Context Handoff**: Generates and copies a rich prompt summarizing recent progress to paste into the other agent.
+- **AI Usage: Save Context Bridge to Workspace**: Writes `.agent-handoff.md` to workspace root and opens it in editor.
+- **Claude Usage: Install Status Line Bridge**: Sets up Claude's status line for official quota reporting.
 
 ## Develop
 
 ```bash
 npm install
-npm test            # vitest, pure modules + fixture ~/.claude
-npm run typecheck
-npm run package     # -> claude-usage-monitor-<version>.vsix
-code --install-extension claude-usage-monitor-0.1.0.vsix
+npm test            # vitest (17 suites, 92 unit tests)
+npm run typecheck   # tsc type checking
+npm run package     # -> claude-usage-monitor-0.4.0.vsix
+code --install-extension claude-usage-monitor-0.4.0.vsix
 ```
 
-Settings: `claudeUsage.refreshSeconds` (10), `claudeUsage.scope` (`workspace` | `all`), `claudeUsage.warnAt` (80).
+Settings:
+- `claudeUsage.antigravityEnabled` (default `true`)
+- `claudeUsage.agentFilter` (`all` | `claude` | `antigravity`)
+- `claudeUsage.refreshSeconds` (10)
+- `claudeUsage.scope` (`workspace` | `all`)
+- `claudeUsage.warnAt` (80)

@@ -15,15 +15,25 @@ const toTotals = (u: RawUsage): TokenTotals => ({
   messages: 1,
 });
 
+export interface ClaudeTranscriptDetails {
+  usage: SessionUsage;
+  filesTouched: string[];
+  commandsRun: string[];
+  userPrompt?: string;
+  lastThinking?: string;
+}
+
 /**
- * Turns a Claude Code transcript (JSONL) into token usage. Streaming writes
- * one assistant message as several lines sharing message.id + requestId; the
- * last one carries the final usage, so later lines replace earlier ones.
+ * Turns a Claude Code transcript (JSONL) into token usage and details.
  */
-export function parseTranscript(text: string, sessionId: string): SessionUsage {
+export function parseClaudeTranscriptDetails(text: string, sessionId: string): ClaudeTranscriptDetails {
   const byKey = new Map<string, UsageEvent>();
   let title: string | undefined;
   let cwd: string | undefined;
+  let userPrompt: string | undefined;
+  let lastThinking: string | undefined;
+  const filesTouched = new Set<string>();
+  const commandsRun = new Set<string>();
 
   for (const line of text.split('\n')) {
     if (!line) continue;
@@ -36,8 +46,35 @@ export function parseTranscript(text: string, sessionId: string): SessionUsage {
     if (!d || typeof d !== 'object') continue;
     if (cwd === undefined && typeof d.cwd === 'string') cwd = d.cwd;
     if (d.type === 'ai-title' && typeof d.aiTitle === 'string') title = d.aiTitle;
+
+    if (d.type === 'user' && d.message?.content) {
+      const c = d.message.content;
+      const textContent = typeof c === 'string' ? c : Array.isArray(c) ? c.map((b: any) => b.text || '').join('') : '';
+      if (!userPrompt && textContent.trim()) userPrompt = textContent.trim();
+    }
+
     if (d.type !== 'assistant') continue;
     const m = d.message;
+    if (Array.isArray(m?.content)) {
+      for (const block of m.content) {
+        if (block?.type === 'thinking' && typeof block.thinking === 'string') {
+          const t = block.thinking.trim();
+          if (t) lastThinking = t.slice(0, 500);
+        }
+        if (block?.type === 'tool_use') {
+          const name = block.name;
+          const input = block.input || {};
+          if (['Edit', 'Write', 'FileEdit', 'MultiFileEdit'].includes(name)) {
+            const p = input.file_path || input.path;
+            if (typeof p === 'string') filesTouched.add(p);
+          }
+          if (name === 'Bash' && typeof input.command === 'string') {
+            commandsRun.add(input.command);
+          }
+        }
+      }
+    }
+
     if (!m?.usage || m.model === '<synthetic>') continue;
     const at = Date.parse(d.timestamp);
     const key = `${m.id ?? d.uuid}:${d.requestId ?? ''}`;
@@ -49,7 +86,22 @@ export function parseTranscript(text: string, sessionId: string): SessionUsage {
     });
   }
 
-  return build(sessionId, [...byKey.values()], title, cwd);
+  return {
+    usage: build(sessionId, [...byKey.values()], title, cwd),
+    filesTouched: [...filesTouched],
+    commandsRun: [...commandsRun],
+    userPrompt,
+    lastThinking,
+  };
+}
+
+/**
+ * Turns a Claude Code transcript (JSONL) into token usage. Streaming writes
+ * one assistant message as several lines sharing message.id + requestId; the
+ * last one carries the final usage, so later lines replace earlier ones.
+ */
+export function parseTranscript(text: string, sessionId: string): SessionUsage {
+  return parseClaudeTranscriptDetails(text, sessionId).usage;
 }
 
 function build(sessionId: string, events: UsageEvent[], title?: string, cwd?: string): SessionUsage {

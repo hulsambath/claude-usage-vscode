@@ -1,7 +1,8 @@
 import { basename } from 'node:path';
 import { estimateRemaining, projectPace } from './estimate';
 import { formatClock, formatDuration, formatTokens } from './format';
-import { SessionView, UsageSnapshot, totalTokens } from './types';
+import { generateHandoffPrompt } from './handoff';
+import { AgentType, SessionView, UsageSnapshot, totalTokens } from './types';
 
 export type Level = 'ok' | 'warn' | 'crit';
 
@@ -18,10 +19,16 @@ export interface QuotaVM {
   paceLine?: string;
   weekly?: { usedPct: number; line: string; level: Level };
   note?: { text: string; action?: 'install' };
+  antigravityUsage?: { tokens: string; count: number; activeCount: number; resetLine?: string };
+  claudeUsage?: { tokens: string; count: number; activeCount: number };
+  contextBridge?: { sourceSessionId: string; sourceTitle: string; sourceAgent: AgentType; targetAgent: AgentType };
+  agentFilter?: AgentType | 'all';
+  counts?: { all: number; claude: number; antigravity: number };
 }
 
 export interface SessionVM {
   id: string;
+  agent: AgentType;
   name: string;
   title?: string;
   state: 'busy' | 'idle' | 'closed';
@@ -31,6 +38,11 @@ export interface SessionVM {
   canOpen: boolean;
   context?: { usedPct: number; line: string };
   details: [string, string][];
+  filesTouched?: string[];
+  commandsRun?: string[];
+  userPrompt?: string;
+  lastThinking?: string;
+  handoffPrompt?: string;
 }
 
 export interface ViewModel {
@@ -55,7 +67,7 @@ function tildify(path: string): string {
 
 const resetPhrase = (atMs: number, now: number) => `at ${formatClock(atMs)}, in ${formatDuration(atMs - now)}`;
 
-function buildQuota(snap: UsageSnapshot, warnAt: number): QuotaVM {
+function buildQuota(snap: UsageSnapshot, warnAt: number, filter: AgentType | 'all' = 'all'): QuotaVM {
   const now = snap.takenAt;
   const five = snap.rateLimits?.fiveHour;
   const seven = snap.rateLimits?.sevenDay;
@@ -64,6 +76,39 @@ function buildQuota(snap: UsageSnapshot, warnAt: number): QuotaVM {
     line: `${Math.round(seven.usedPercentage)}% of this week used, resets in ${formatDuration(seven.resetsAt * 1000 - now)}`,
     level: level(seven.usedPercentage, warnAt),
   };
+
+  const claudeSessions = snap.sessions.filter((s) => s.agent !== 'antigravity');
+  const agySessions = snap.sessions.filter((s) => s.agent === 'antigravity');
+  const counts = {
+    all: snap.sessions.length,
+    claude: claudeSessions.length,
+    antigravity: agySessions.length,
+  };
+
+  let antigravityUsage: QuotaVM['antigravityUsage'] | undefined;
+  if (snap.antigravityTotals) {
+    const agyTok = totalTokens(snap.antigravityTotals);
+    const active = agySessions.filter((s) => s.live?.status === 'busy').length;
+    antigravityUsage = {
+      tokens: formatTokens(agyTok),
+      count: agySessions.length,
+      activeCount: active,
+      resetLine: snap.antigravityBlock ? `5-hour window ends ${resetPhrase(snap.antigravityBlock.end, now)}` : undefined,
+    };
+  }
+
+  let contextBridge: QuotaVM['contextBridge'] | undefined;
+  if (snap.sessions.length > 0) {
+    const mostRecent = snap.sessions[0];
+    const sourceAgent: AgentType = mostRecent.agent || 'claude';
+    const targetAgent: AgentType = sourceAgent === 'claude' ? 'antigravity' : 'claude';
+    contextBridge = {
+      sourceSessionId: mostRecent.sessionId,
+      sourceTitle: mostRecent.title || mostRecent.live?.name || mostRecent.sessionId.slice(0, 8),
+      sourceAgent,
+      targetAgent,
+    };
+  }
 
   if (five) {
     const end = five.resetsAt * 1000;
@@ -88,6 +133,10 @@ function buildQuota(snap: UsageSnapshot, warnAt: number): QuotaVM {
       tokensLine: est && `About ${formatTokens(est.remaining)} tokens left of roughly ${formatTokens(est.limit)}`,
       paceLine,
       weekly,
+      antigravityUsage,
+      contextBridge,
+      agentFilter: filter,
+      counts,
     };
   }
 
@@ -104,13 +153,28 @@ function buildQuota(snap: UsageSnapshot, warnAt: number): QuotaVM {
       resetLine: `This 5-hour window ends ${resetPhrase(snap.block.end, now)}`,
       weekly,
       note,
+      antigravityUsage,
+      contextBridge,
+      agentFilter: filter,
+      counts,
     };
   }
-  return { state: 'none', headline: 'No usage in the last 5 hours', level: 'ok', weekly, note };
+  return {
+    state: 'none',
+    headline: 'No usage in the last 5 hours',
+    level: 'ok',
+    weekly,
+    note,
+    antigravityUsage,
+    contextBridge,
+    agentFilter: filter,
+    counts,
+  };
 }
 
 function buildSession(v: SessionView, now: number): SessionVM {
   const u = v.usage;
+  const agent: AgentType = v.agent || 'claude';
   const state = !v.live ? 'closed' : v.live.status === 'busy' ? 'busy' : 'idle';
   const folder = basename(v.live?.cwd || u?.cwd || '') || 'unknown folder';
   const lastAt = Math.max(v.live?.updatedAt ?? 0, u?.lastAt ?? 0);
@@ -150,11 +214,17 @@ function buildSession(v: SessionView, now: number): SessionVM {
       details.push([model, `${formatTokens(totalTokens(t))} tokens, ${t.messages} messages`]);
     }
   }
+  if (v.filesTouched && v.filesTouched.length > 0) {
+    const names = v.filesTouched.slice(0, 4).map((f) => basename(f)).join(', ');
+    const more = v.filesTouched.length > 4 ? ` (+${v.filesTouched.length - 4} more)` : '';
+    details.push(['Files touched', `${names}${more}`]);
+  }
   if (b?.model) details.push(['Model now', b.model]);
   details.push(['Folder', tildify(v.live?.cwd || u?.cwd || 'unknown')]);
 
   return {
     id: v.sessionId,
+    agent,
     name: v.live?.name || b?.session_name || u?.title || v.sessionId.slice(0, 8),
     title: u?.title,
     state,
@@ -164,9 +234,21 @@ function buildSession(v: SessionView, now: number): SessionVM {
     canOpen: !!v.transcriptPath,
     context,
     details,
+    filesTouched: v.filesTouched,
+    commandsRun: v.commandsRun,
+    userPrompt: v.userPrompt,
+    lastThinking: v.lastThinking,
+    handoffPrompt: generateHandoffPrompt({ sourceSession: v }),
   };
 }
 
-export function buildViewModel(snap: UsageSnapshot, warnAt: number): ViewModel {
-  return { quota: buildQuota(snap, warnAt), sessions: snap.sessions.map((s) => buildSession(s, snap.takenAt)) };
+export function buildViewModel(snap: UsageSnapshot, warnAt: number, filter: AgentType | 'all' = 'all'): ViewModel {
+  const filteredSessions =
+    filter === 'claude'
+      ? snap.sessions.filter((s) => s.agent !== 'antigravity')
+      : filter === 'antigravity'
+        ? snap.sessions.filter((s) => s.agent === 'antigravity')
+        : snap.sessions;
+
+  return { quota: buildQuota(snap, warnAt, filter), sessions: filteredSessions.map((s) => buildSession(s, snap.takenAt)) };
 }

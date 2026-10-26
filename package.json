@@ -1,9 +1,13 @@
 {
   "name": "claude-usage-monitor",
   "displayName": "Claude Usage Monitor",
-  "description": "Local per-conversation Claude Code token usage and the 5-hour quota, in the status bar and a sidebar.",
-  "version": "0.3.1",
+  "description": "Local per-conversation Claude Code and Antigravity token usage, quota monitoring, and cross-agent context handoff bridge in the status bar and sidebar.",
+  "version": "0.4.0",
   "publisher": "hulsambath",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hulsambath/claude-usage-vscode.git"
+  },
   "license": "UNLICENSED",
   "private": true,
   "engines": {
@@ -28,6 +32,18 @@
         "title": "Refresh",
         "category": "Claude Usage",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "claudeUsage.copyHandoff",
+        "title": "Copy Agent Context Handoff",
+        "category": "AI Usage",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "claudeUsage.saveHandoff",
+        "title": "Save Context Bridge to Workspace (.agent-handoff.md)",
+        "category": "AI Usage",
+        "icon": "$(save)"
       },
       {
         "command": "claudeUsage.installBridge",
@@ -76,9 +92,19 @@
     "menus": {
       "view/title": [
         {
+          "command": "claudeUsage.copyHandoff",
+          "when": "view == claudeUsage.view || view == claudeUsage.sideView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claudeUsage.saveHandoff",
+          "when": "view == claudeUsage.view || view == claudeUsage.sideView",
+          "group": "navigation@2"
+        },
+        {
           "command": "claudeUsage.refresh",
           "when": "view == claudeUsage.view || view == claudeUsage.sideView",
-          "group": "navigation"
+          "group": "navigation@3"
         }
       ],
       "commandPalette": [
@@ -89,13 +115,13 @@
       ]
     },
     "configuration": {
-      "title": "Claude Usage",
+      "title": "Claude & Antigravity Usage",
       "properties": {
         "claudeUsage.refreshSeconds": {
           "type": "number",
           "default": 10,
           "minimum": 2,
-          "description": "How often to re-read ~/.claude."
+          "description": "How often to re-read ~/.claude and ~/.gemini."
         },
         "claudeUsage.scope": {
           "type": "string",
@@ -110,6 +136,21 @@
           "type": "number",
           "default": 80,
           "description": "5h quota percentage at which the status bar turns to a warning colour."
+        },
+        "claudeUsage.antigravityEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Antigravity token tracking and cross-agent context bridge."
+        },
+        "claudeUsage.agentFilter": {
+          "type": "string",
+          "enum": [
+            "all",
+            "claude",
+            "antigravity"
+          ],
+          "default": "all",
+          "description": "Filter conversations list to a specific AI agent or show all."
         }
       }
     }

@@ -72,13 +72,21 @@ export interface BlockUsage {
   totals: TokenTotals;
 }
 
+export type AgentType = 'claude' | 'antigravity';
+
 export interface SessionView {
   sessionId: string;
+  agent?: AgentType;
+  title?: string;
   live?: LiveSession;
   usage?: SessionUsage;
   bridge?: BridgeSnapshot;
   transcriptPath?: string;
   inWorkspace: boolean;
+  filesTouched?: string[];
+  commandsRun?: string[];
+  userPrompt?: string;
+  lastThinking?: string;
 }
 
 export interface UsageSnapshot {
@@ -87,6 +95,9 @@ export interface UsageSnapshot {
   block?: BlockUsage;
   /** Local tokens inside the official 5h window, when the quota is known. */
   quotaWindow?: BlockUsage;
+  antigravityBlock?: BlockUsage;
+  antigravityTotals?: TokenTotals;
+  claudeTotals?: TokenTotals;
   bridgeInstalled: boolean;
   takenAt: number;
 }

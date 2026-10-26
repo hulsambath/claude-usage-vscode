@@ -3,27 +3,91 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { AntigravityCollector } from './antigravityCollector';
+import { antigravityPaths, defaultAntigravityRoot } from './antigravityPaths';
 import { Collector } from './collector';
 import { focusFirst } from './focus';
+import { generateHandoffPrompt, saveHandoffFile } from './handoff';
 import { defaultClaudeRoot, paths } from './paths';
 import { bridgeCommand, pickNodeBinary, planStatusLineInstall } from './settingsPlan';
 import { UsageStatusBar } from './statusBar';
-import { UsageSnapshot } from './types';
+import { AgentType, SessionView, UsageSnapshot } from './types';
 import { UsageViewProvider, ViewMessage } from './usageView';
 import { buildViewModel } from './viewModel';
 
 export function activate(context: vscode.ExtensionContext): void {
   const root = defaultClaudeRoot();
   const p = paths(root);
-  const collector = new Collector(root);
+  const agyRoot = defaultAntigravityRoot();
+  const agyP = antigravityPaths(agyRoot);
+  const agyCollector = existsSync(agyRoot) ? new AntigravityCollector(agyRoot) : undefined;
+  const collector = new Collector(root, undefined, agyCollector);
   const statusBar = new UsageStatusBar();
-  const log = vscode.window.createOutputChannel('Claude Usage');
+  const log = vscode.window.createOutputChannel('AI Usage & Context Monitor');
   let latest: UsageSnapshot | undefined;
+  let currentFilter: AgentType | 'all' = 'all';
+
+  const findSession = async (sessionId?: string): Promise<SessionView | undefined> => {
+    if (!latest || latest.sessions.length === 0) return undefined;
+    if (sessionId) {
+      return latest.sessions.find((s) => s.sessionId === sessionId);
+    }
+    // If not provided, prompt user or pick most recent
+    if (latest.sessions.length === 1) return latest.sessions[0];
+    const items = latest.sessions.map((s) => ({
+      label: `${s.agent === 'claude' ? '🟣 Claude' : '🔵 Antigravity'}: ${s.live?.name || s.title || s.sessionId.slice(0, 8)}`,
+      description: s.title && s.title !== s.live?.name ? s.title : s.live?.cwd || s.usage?.cwd || '',
+      detail: s.filesTouched && s.filesTouched.length > 0 ? `Files: ${s.filesTouched.join(', ')}` : undefined,
+      session: s,
+    }));
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Select a conversation to generate context handoff for',
+    });
+    return picked?.session;
+  };
+
+  const copyHandoff = async (sessionId?: string) => {
+    const session = await findSession(sessionId);
+    if (!session) {
+      void vscode.window.showWarningMessage('No active or recent AI conversation found to hand off.');
+      return;
+    }
+    const targetAgent: AgentType = session.agent === 'claude' ? 'antigravity' : 'claude';
+    const targetName = targetAgent === 'claude' ? 'Claude Code' : 'Antigravity';
+    const prompt = generateHandoffPrompt({ sourceSession: session, targetAgent });
+    await vscode.env.clipboard.writeText(prompt);
+    void vscode.window.showInformationMessage(
+      `Context handoff copied to clipboard! Paste it into ${targetName} to continue seamlessly.`,
+    );
+  };
+
+  const saveHandoff = async (sessionId?: string) => {
+    const session = await findSession(sessionId);
+    if (!session) {
+      void vscode.window.showWarningMessage('No active or recent AI conversation found to hand off.');
+      return;
+    }
+    const folders = vscode.workspace.workspaceFolders;
+    const wsFolder = folders && folders.length > 0 ? folders[0].uri.fsPath : session.live?.cwd || session.usage?.cwd || process.cwd();
+    const prompt = generateHandoffPrompt({ sourceSession: session });
+    const filePath = await saveHandoffFile(wsFolder, prompt);
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    await vscode.window.showTextDocument(doc, { preview: false });
+    void vscode.window.showInformationMessage(`Saved context bridge to ${filePath} and opened in editor.`);
+  };
+
   const onMessage = (m: ViewMessage) => {
     if (m.type === 'refresh') void refresh();
     if (m.type === 'install') void vscode.commands.executeCommand('claudeUsage.installBridge');
     if (m.type === 'open') void vscode.commands.executeCommand('claudeUsage.openTranscript', m.id);
+    if (m.type === 'handoff') void copyHandoff(m.id);
+    if (m.type === 'saveHandoff') void saveHandoff(m.id);
+    if (m.type === 'filter') {
+      currentFilter = m.filter || 'all';
+      void refresh();
+    }
   };
+
   // The same usage view lives in the left activity bar and the right secondary side bar.
   const views = ['claudeUsage.view', 'claudeUsage.sideView'].map((id) => new UsageViewProvider(id, onMessage));
   context.subscriptions.push(statusBar, log, ...views.map((v) => vscode.window.registerWebviewViewProvider(v.id, v)));
@@ -37,7 +101,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
       const snap = await collector.collect(folders, config().get<'workspace' | 'all'>('scope', 'workspace'), Date.now());
       latest = snap;
-      const vm = buildViewModel(snap, config().get<number>('warnAt', 80));
+      const vm = buildViewModel(snap, config().get<number>('warnAt', 80), currentFilter);
       for (const v of views) v.update(vm);
       statusBar.update(vm, snap);
     } catch (e) {
@@ -55,25 +119,39 @@ export function activate(context: vscode.ExtensionContext): void {
   schedule();
   context.subscriptions.push({ dispose: () => timer && clearInterval(timer) });
 
-  // The bridge rewrites its snapshot on every status line refresh; react quickly to new quota numbers.
+  // Watchers for fast reactions
   let watcher: FSWatcher | undefined;
+  let agyWatcher: FSWatcher | undefined;
   let debounce: NodeJS.Timeout | undefined;
-  const ensureWatcher = () => {
-    if (watcher || !existsSync(p.bridgeSnapshots)) return;
-    try {
-      watcher = watch(p.bridgeSnapshots, () => {
-        if (debounce) clearTimeout(debounce);
-        debounce = setTimeout(refresh, 500);
-      });
-    } catch (e) {
-      log.appendLine(`watch failed: ${String(e)}`);
+
+  const ensureWatchers = () => {
+    if (!watcher && existsSync(p.bridgeSnapshots)) {
+      try {
+        watcher = watch(p.bridgeSnapshots, () => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(refresh, 500);
+        });
+      } catch (e) {
+        log.appendLine(`claude watch failed: ${String(e)}`);
+      }
+    }
+    if (!agyWatcher && existsSync(agyP.presence)) {
+      try {
+        agyWatcher = watch(agyP.presence, () => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(refresh, 500);
+        });
+      } catch (e) {
+        log.appendLine(`antigravity watch failed: ${String(e)}`);
+      }
     }
   };
-  ensureWatcher();
-  const watchRetry = setInterval(ensureWatcher, 60_000);
+  ensureWatchers();
+  const watchRetry = setInterval(ensureWatchers, 60_000);
   context.subscriptions.push({
     dispose: () => {
       watcher?.close();
+      agyWatcher?.close();
       clearInterval(watchRetry);
       if (debounce) clearTimeout(debounce);
     },
@@ -87,10 +165,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => void refresh()),
     vscode.commands.registerCommand('claudeUsage.refresh', refresh),
+    vscode.commands.registerCommand('claudeUsage.copyHandoff', (id?: string) => copyHandoff(id)),
+    vscode.commands.registerCommand('claudeUsage.saveHandoff', (id?: string) => saveHandoff(id)),
     vscode.commands.registerCommand('claudeUsage.show', async () => {
       if (await focusFirst(['claudeUsage.sideView', 'claudeUsage.view'], (c) => vscode.commands.executeCommand(c))) return;
       const choice = await vscode.window.showWarningMessage(
-        'Claude Usage was updated, but this window still has the old layout. Reload the window to show the usage panel.',
+        'Usage panel was updated, but this window still has the old layout. Reload the window to show the usage panel.',
         'Reload Window',
       );
       if (choice) await vscode.commands.executeCommand('workbench.action.reloadWindow');
@@ -101,7 +181,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('claudeUsage.installBridge', async () => {
       await installBridge(context, p, log);
-      ensureWatcher();
+      ensureWatchers();
       await refresh();
     }),
   );
