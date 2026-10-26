@@ -6,6 +6,36 @@ import { AgentType, SessionView, UsageSnapshot, totalTokens } from './types';
 
 export type Level = 'ok' | 'warn' | 'crit';
 
+export interface AgentCardVM {
+  agent: AgentType;
+  name: string;
+  headline: string;
+  tokensLine?: string;
+  resetLine?: string;
+  paceLine?: string;
+  level: Level;
+  gauge?: {
+    usedPct?: number;
+    elapsedPct?: number;
+    legendUsed?: string;
+    legendTime?: string;
+    ariaLabel?: string;
+  };
+  contextTrack?: {
+    usedPct: number;
+    line: string;
+  };
+  weekly?: {
+    usedPct: number;
+    line: string;
+    level: Level;
+  };
+  note?: {
+    text: string;
+    action?: 'install';
+  };
+}
+
 export interface QuotaVM {
   state: 'official' | 'local' | 'none';
   headline: string;
@@ -24,6 +54,8 @@ export interface QuotaVM {
   contextBridge?: { sourceSessionId: string; sourceTitle: string; sourceAgent: AgentType; targetAgent: AgentType };
   agentFilter?: AgentType | 'all';
   counts?: { all: number; claude: number; antigravity: number };
+  claudeCard?: AgentCardVM;
+  antigravityCard?: AgentCardVM;
 }
 
 export interface SessionVM {
@@ -85,17 +117,119 @@ function buildQuota(snap: UsageSnapshot, warnAt: number, filter: AgentType | 'al
     antigravity: agySessions.length,
   };
 
-  let antigravityUsage: QuotaVM['antigravityUsage'] | undefined;
-  if (snap.antigravityTotals) {
-    const agyTok = totalTokens(snap.antigravityTotals);
-    const active = agySessions.filter((s) => s.live?.status === 'busy').length;
-    antigravityUsage = {
-      tokens: formatTokens(agyTok),
-      count: agySessions.length,
-      activeCount: active,
-      resetLine: snap.antigravityBlock ? `5-hour window ends ${resetPhrase(snap.antigravityBlock.end, now)}` : undefined,
+  const note = snap.bridgeInstalled
+    ? { text: 'The official percentage shows after your next Claude response.' }
+    : { text: 'Install the status line bridge to see your official quota.', action: 'install' as const };
+
+  const agyTok = snap.antigravityTotals ? totalTokens(snap.antigravityTotals) : 0;
+  const claudeTok = snap.block ? totalTokens(snap.block.totals) : 0;
+
+  // 1. Build Claude Card
+  let claudeCard: AgentCardVM;
+  if (five) {
+    const end = five.resetsAt * 1000;
+    const start = end - 5 * 3_600_000;
+    const used = five.usedPercentage;
+    const pace = projectPace(used, start, end, now);
+    const est = snap.quotaWindow && estimateRemaining(totalTokens(snap.quotaWindow.totals), used);
+    let paceLine: string | undefined;
+    if (pace.kind === 'reached') paceLine = `Limit reached. It resets ${resetPhrase(end, now)}.`;
+    if (pace.kind === 'limit') {
+      paceLine = `At this pace you'll hit the limit around ${formatClock(pace.at)}, ${formatDuration(end - pace.at)} before it resets.`;
+    }
+    if (pace.kind === 'spare') paceLine = `At this pace you'll finish this window with about ${pace.leftPct}% to spare.`;
+
+    claudeCard = {
+      agent: 'claude',
+      name: 'Claude Code',
+      headline: `${Math.max(0, Math.round(100 - used))}% left`,
+      level: pace.kind === 'limit' && level(used, warnAt) === 'ok' ? 'warn' : level(used, warnAt),
+      gauge: {
+        usedPct: Math.min(100, Math.round(used)),
+        elapsedPct: pace.elapsedPct,
+        legendUsed: `Quota used ${Math.min(100, Math.round(used))}%`,
+        legendTime: `Time passed ${Math.min(100, Math.round(pace.elapsedPct))}%`,
+        ariaLabel: `${Math.round(used)}% of the 5-hour quota used, ${Math.round(pace.elapsedPct)}% of the window elapsed`,
+      },
+      resetLine: `Resets ${resetPhrase(end, now)}`,
+      tokensLine: est ? `About ${formatTokens(est.remaining)} tokens left of roughly ${formatTokens(est.limit)}` : undefined,
+      paceLine,
+      weekly,
+    };
+  } else if (snap.block) {
+    const elapsed = Math.round(((now - snap.block.start) / (snap.block.end - snap.block.start)) * 100);
+    claudeCard = {
+      agent: 'claude',
+      name: 'Claude Code',
+      headline: `${formatTokens(claudeTok)} tokens used`,
+      level: 'ok',
+      gauge: {
+        elapsedPct: elapsed,
+        legendTime: `Window elapsed ${elapsed}%`,
+        ariaLabel: `${elapsed}% of the window elapsed`,
+      },
+      resetLine: `This 5-hour window ends ${resetPhrase(snap.block.end, now)}`,
+      weekly,
+      note,
+    };
+  } else {
+    claudeCard = {
+      agent: 'claude',
+      name: 'Claude Code',
+      headline: weekly ? `${weekly.usedPct}% week used` : 'Idle in last 5 hours',
+      level: 'ok',
+      weekly,
+      note,
     };
   }
+
+  // 2. Build Antigravity Card
+  const activeCount = agySessions.filter((s) => s.live?.status === 'busy').length;
+  const activeSession = agySessions.find((s) => s.live?.status === 'busy') || agySessions[0];
+  const b = activeSession?.bridge;
+  let contextTrack: AgentCardVM['contextTrack'] | undefined;
+  if (b && typeof b.context_used_percentage === 'number') {
+    const size = b.context_window_size;
+    const usedTokens = b.context_tokens ?? (size ? Math.round((size * b.context_used_percentage) / 100) : undefined);
+    contextTrack = {
+      usedPct: Math.round(b.context_used_percentage),
+      line:
+        size && usedTokens !== undefined
+          ? `${formatTokens(Math.max(0, size - usedTokens))} of ${formatTokens(size)} context tokens left`
+          : `${Math.round(100 - b.context_used_percentage)}% context left`,
+    };
+  }
+
+  let agyElapsedPct = 0;
+  let agyResetLine: string | undefined;
+  if (snap.antigravityBlock) {
+    agyElapsedPct = Math.min(100, Math.max(0, Math.round(((now - snap.antigravityBlock.start) / (snap.antigravityBlock.end - snap.antigravityBlock.start)) * 100)));
+    agyResetLine = `5-hour window ends ${resetPhrase(snap.antigravityBlock.end, now)}`;
+  }
+
+  const antigravityCard: AgentCardVM = {
+    agent: 'antigravity',
+    name: 'Antigravity',
+    headline: agyTok > 0 ? `${formatTokens(agyTok)} tokens used` : 'Idle in last 5 hours',
+    level: 'ok',
+    gauge: {
+      usedPct: contextTrack ? contextTrack.usedPct : undefined,
+      elapsedPct: agyElapsedPct > 0 ? agyElapsedPct : undefined,
+      legendUsed: contextTrack ? `Context used ${contextTrack.usedPct}%` : undefined,
+      legendTime: agyElapsedPct > 0 ? `Window elapsed ${agyElapsedPct}%` : undefined,
+      ariaLabel: `Antigravity 5-hour window: ${agyElapsedPct}% elapsed${contextTrack ? `, ${contextTrack.usedPct}% context used` : ''}`,
+    },
+    contextTrack,
+    resetLine: agyResetLine,
+    tokensLine: `${agySessions.length} conversation${agySessions.length === 1 ? '' : 's'}${activeCount > 0 ? `, ${activeCount} active` : ''}`,
+  };
+
+  const antigravityUsage = agyTok > 0 ? {
+    tokens: formatTokens(agyTok),
+    count: agySessions.length,
+    activeCount,
+    resetLine: agyResetLine,
+  } : undefined;
 
   let contextBridge: QuotaVM['contextBridge'] | undefined;
   if (snap.sessions.length > 0) {
@@ -110,65 +244,82 @@ function buildQuota(snap: UsageSnapshot, warnAt: number, filter: AgentType | 'al
     };
   }
 
-  if (five) {
-    const end = five.resetsAt * 1000;
-    const start = end - 5 * 3_600_000;
-    const used = five.usedPercentage;
-    const pace = projectPace(used, start, end, now);
-    const est = snap.quotaWindow && estimateRemaining(totalTokens(snap.quotaWindow.totals), used);
-    let paceLine: string | undefined;
-    if (pace.kind === 'reached') paceLine = `Limit reached. It resets ${resetPhrase(end, now)}.`;
-    if (pace.kind === 'limit') {
-      paceLine = `At this pace you'll hit the limit around ${formatClock(pace.at)}, ${formatDuration(end - pace.at)} before it resets.`;
+  // 3. Overall Headline & State
+  let headline = 'No usage in the last 5 hours';
+  let state: QuotaVM['state'] = 'none';
+  let levelVal: Level = 'ok';
+  let usedPct: number | undefined;
+  let elapsedPct: number | undefined;
+  let resetLine: string | undefined;
+  let tokensLine: string | undefined;
+  let tokensLeft: string | undefined;
+  let paceLine: string | undefined;
+
+  if (filter === 'antigravity') {
+    headline = antigravityCard.headline;
+    state = agyTok > 0 ? 'local' : 'none';
+    resetLine = antigravityCard.resetLine;
+    tokensLine = antigravityCard.tokensLine;
+    usedPct = antigravityCard.gauge?.usedPct;
+    elapsedPct = antigravityCard.gauge?.elapsedPct;
+  } else if (filter === 'claude') {
+    headline = claudeCard.headline;
+    state = five ? 'official' : snap.block ? 'local' : 'none';
+    levelVal = claudeCard.level;
+    usedPct = claudeCard.gauge?.usedPct;
+    elapsedPct = claudeCard.gauge?.elapsedPct;
+    resetLine = claudeCard.resetLine;
+    tokensLine = claudeCard.tokensLine;
+    paceLine = claudeCard.paceLine;
+  } else {
+    if (five) {
+      state = 'official';
+      headline = `${Math.max(0, Math.round(100 - five.usedPercentage))}% left`;
+      usedPct = Math.min(100, Math.round(five.usedPercentage));
+      levelVal = claudeCard.level;
+      elapsedPct = claudeCard.gauge?.elapsedPct;
+      resetLine = claudeCard.resetLine;
+      const est = snap.quotaWindow && estimateRemaining(totalTokens(snap.quotaWindow.totals), five.usedPercentage);
+      tokensLeft = est && formatTokens(est.remaining);
+      tokensLine = claudeCard.tokensLine;
+      paceLine = claudeCard.paceLine;
+    } else if (claudeTok > 0 && agyTok > 0) {
+      state = 'local';
+      headline = `${formatTokens(claudeTok + agyTok)} tokens used`;
+      elapsedPct = snap.block ? Math.round(((now - snap.block.start) / (snap.block.end - snap.block.start)) * 100) : agyElapsedPct;
+      resetLine = `5-hour window ends ${resetPhrase(snap.block?.end || snap.antigravityBlock!.end, now)}`;
+    } else if (claudeTok > 0) {
+      state = 'local';
+      headline = `${formatTokens(claudeTok)} tokens used`;
+      elapsedPct = Math.round(((now - snap.block!.start) / (snap.block!.end - snap.block!.start)) * 100);
+      resetLine = `This 5-hour window ends ${resetPhrase(snap.block!.end, now)}`;
+    } else if (agyTok > 0) {
+      state = 'local';
+      headline = `${formatTokens(agyTok)} tokens used`;
+      elapsedPct = agyElapsedPct;
+      resetLine = agyResetLine;
+      tokensLine = antigravityCard.tokensLine;
     }
-    if (pace.kind === 'spare') paceLine = `At this pace you'll finish this window with about ${pace.leftPct}% to spare.`;
-    return {
-      state: 'official',
-      headline: `${Math.max(0, Math.round(100 - used))}% left`,
-      usedPct: Math.min(100, Math.round(used)),
-      elapsedPct: pace.elapsedPct,
-      level: pace.kind === 'limit' && level(used, warnAt) === 'ok' ? 'warn' : level(used, warnAt),
-      resetLine: `Resets ${resetPhrase(end, now)}`,
-      tokensLeft: est && formatTokens(est.remaining),
-      tokensLine: est && `About ${formatTokens(est.remaining)} tokens left of roughly ${formatTokens(est.limit)}`,
-      paceLine,
-      weekly,
-      antigravityUsage,
-      contextBridge,
-      agentFilter: filter,
-      counts,
-    };
   }
 
-  const note = snap.bridgeInstalled
-    ? { text: 'The official percentage shows after your next Claude response.' }
-    : { text: 'Install the status line bridge to see your official quota.', action: 'install' as const };
-
-  if (snap.block) {
-    return {
-      state: 'local',
-      headline: `${formatTokens(totalTokens(snap.block.totals))} tokens used`,
-      elapsedPct: Math.round(((now - snap.block.start) / (snap.block.end - snap.block.start)) * 100),
-      level: 'ok',
-      resetLine: `This 5-hour window ends ${resetPhrase(snap.block.end, now)}`,
-      weekly,
-      note,
-      antigravityUsage,
-      contextBridge,
-      agentFilter: filter,
-      counts,
-    };
-  }
   return {
-    state: 'none',
-    headline: 'No usage in the last 5 hours',
-    level: 'ok',
+    state,
+    headline,
+    usedPct,
+    elapsedPct,
+    level: levelVal,
+    resetLine,
+    tokensLine,
+    tokensLeft,
+    paceLine,
     weekly,
     note,
     antigravityUsage,
     contextBridge,
     agentFilter: filter,
     counts,
+    claudeCard,
+    antigravityCard,
   };
 }
 

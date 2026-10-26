@@ -1,9 +1,78 @@
-import { QuotaVM, SessionVM, ViewModel } from './viewModel';
+import { AgentCardVM, QuotaVM, SessionVM, ViewModel } from './viewModel';
 
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 const pct = (n: number | undefined): number => Math.min(100, Math.max(0, Math.round(n ?? 0)));
+
+function renderCardGauge(card: AgentCardVM): string {
+  const g = card.gauge;
+  if (!g) return '';
+  const tracks: string[] = [];
+  if (g.usedPct !== undefined) {
+    tracks.push(`<div class="track use"><span style="width:${pct(g.usedPct)}%"></span></div>`);
+  }
+  if (g.elapsedPct !== undefined) {
+    tracks.push(`<div class="track time${g.usedPct === undefined ? ' solo' : ''}"><span style="width:${pct(g.elapsedPct)}%"></span></div>`);
+  }
+  const legendParts: string[] = [];
+  if (g.legendUsed) legendParts.push(`<span>${esc(g.legendUsed)}</span>`);
+  if (g.legendTime) legendParts.push(`<span>${esc(g.legendTime)}</span>`);
+  const legend = legendParts.length > 0 ? `<div class="legend">${legendParts.join('')}</div>` : '';
+
+  return `<div class="gauge" role="img" aria-label="${esc(g.ariaLabel || '')}">
+    ${tracks.join('')}
+    ${legend}
+  </div>`;
+}
+
+function renderClaudeCard(c: AgentCardVM): string {
+  const line = (cls: string, text?: string) => (text ? `<p class="${cls}">${esc(text)}</p>` : '');
+  const weekly = c.weekly
+    ? `<div class="weekly level-${c.weekly.level}">
+      <div class="track thin"><span style="width:${pct(c.weekly.usedPct)}%"></span></div>
+      <p>${esc(c.weekly.line)}</p>
+    </div>`
+    : '';
+  const note = c.note
+    ? `<div class="note"><p>${esc(c.note.text)}</p>${
+        c.note.action === 'install' ? '<button data-action="install">Install status line bridge</button>' : ''
+      }</div>`
+    : '';
+
+  return `<div class="agent-graph-card claude level-${c.level}">
+    <div class="card-head">
+      <span class="badge claude">Claude Code</span>
+      <span class="card-headline">${esc(c.headline)}</span>
+    </div>
+    ${renderCardGauge(c)}
+    ${line('tokens', c.tokensLine)}
+    ${line('pace', c.paceLine)}
+    ${weekly}
+    ${line('reset', c.resetLine)}
+    ${note}
+  </div>`;
+}
+
+function renderAntigravityCard(a: AgentCardVM): string {
+  const line = (cls: string, text?: string) => (text ? `<p class="${cls}">${esc(text)}</p>` : '');
+  const ctx = a.contextTrack
+    ? `<div class="ctx-summary">
+        <span class="ctx-tag">Context window:</span> <span>${esc(a.contextTrack.line)}</span>
+      </div>`
+    : '';
+
+  return `<div class="agent-graph-card antigravity level-${a.level}">
+    <div class="card-head">
+      <span class="badge antigravity">Antigravity</span>
+      <span class="card-headline">${esc(a.headline)}</span>
+    </div>
+    ${renderCardGauge(a)}
+    ${ctx}
+    ${line('tokens', a.tokensLine)}
+    ${line('reset', a.resetLine)}
+  </div>`;
+}
 
 function renderQuota(q: QuotaVM): string {
   const gauge =
@@ -31,19 +100,6 @@ function renderQuota(q: QuotaVM): string {
       }</div>`
     : '';
 
-  const agySection = q.antigravityUsage
-    ? `<div class="agy-card">
-      <div class="agy-head">
-        <span class="badge antigravity">Antigravity</span>
-        <span class="tok">${esc(q.antigravityUsage.tokens)} tokens</span>
-      </div>
-      <p class="meta">${q.antigravityUsage.count} conversation${q.antigravityUsage.count === 1 ? '' : 's'}${
-        q.antigravityUsage.activeCount > 0 ? `, ${q.antigravityUsage.activeCount} active` : ''
-      }</p>
-      ${line('reset', q.antigravityUsage.resetLine)}
-    </div>`
-    : '';
-
   const bridgeCard = q.contextBridge
     ? `<div class="bridge-card" role="region" aria-label="Context Bridge">
       <div class="bridge-head">
@@ -58,15 +114,22 @@ function renderQuota(q: QuotaVM): string {
     </div>`
     : '';
 
+  const dualGraphs =
+    q.claudeCard && q.antigravityCard
+      ? `<div class="dual-graphs">
+          ${q.agentFilter !== 'antigravity' ? renderClaudeCard(q.claudeCard) : ''}
+          ${q.agentFilter !== 'claude' ? renderAntigravityCard(q.antigravityCard) : ''}
+        </div>`
+      : `${gauge}
+        ${line('tokens', q.tokensLine)}
+        ${line('pace', q.paceLine)}
+        ${weekly}
+        ${note}`;
+
   return `<section class="quota level-${q.level}" aria-label="5-hour quota">
     <div class="head"><h1>${esc(q.headline)}</h1>${q.state === 'local' ? '<span class="tag">estimate</span>' : ''}</div>
     ${line('reset', q.resetLine)}
-    ${gauge}
-    ${line('tokens', q.tokensLine)}
-    ${line('pace', q.paceLine)}
-    ${weekly}
-    ${note}
-    ${agySection}
+    ${dualGraphs}
     ${bridgeCard}
   </section>`;
 }

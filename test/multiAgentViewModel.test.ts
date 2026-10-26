@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { renderBody } from '../src/render';
 import { buildViewModel } from '../src/viewModel';
 import { SessionView, UsageSnapshot } from '../src/types';
 
@@ -105,5 +106,18 @@ describe('multi-agent viewModel', () => {
       sourceAgent: 'antigravity',
       targetAgent: 'claude',
     });
+  });
+
+  it('renders dual graphs for both Claude and Antigravity in HTML', () => {
+    const vm = buildViewModel(snap, 80, 'all');
+    const html = renderBody(vm);
+
+    expect(html).toContain('class="dual-graphs"');
+    expect(html).toContain('class="agent-graph-card claude');
+    expect(html).toContain('class="agent-graph-card antigravity');
+    expect(html).toContain('Claude Code');
+    expect(html).toContain('Antigravity');
+    expect(html).toContain('3.4k tokens used');
+    expect(html).toContain('60% left');
   });
 });

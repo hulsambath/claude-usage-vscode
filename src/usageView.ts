@@ -53,8 +53,21 @@ h1, h2 { margin: 0; font-weight: 600; }
 .badge.claude { background: rgba(215, 120, 50, 0.15); color: #e0884c; border: 1px solid rgba(215, 120, 50, 0.3); }
 .badge.antigravity { background: rgba(76, 143, 224, 0.15); color: #4c8fe0; border: 1px solid rgba(76, 143, 224, 0.3); }
 
-.agy-card { margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: var(--vscode-textBlockQuote-background, var(--track)); border-left: 3px solid #4c8fe0; }
-.agy-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+.dual-graphs { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.agent-graph-card { padding: 12px 12px 10px; border-radius: 6px; background: var(--vscode-textBlockQuote-background, var(--track)); border: 1px solid var(--line); border-left: 3px solid transparent; }
+.agent-graph-card.claude { border-left-color: #e0884c; --accent: var(--ok); }
+.agent-graph-card.claude.level-warn { --accent: var(--warn); }
+.agent-graph-card.claude.level-crit { --accent: var(--crit); }
+.agent-graph-card.antigravity { border-left-color: #4c8fe0; --accent: #4c8fe0; }
+.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+.card-headline { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.agent-graph-card .gauge { margin: 8px 0 6px; }
+.agent-graph-card .weekly { margin-top: 6px; }
+.agent-graph-card .reset { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.agent-graph-card .tokens { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.agent-graph-card .pace { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.agent-graph-card .ctx-summary { font-size: 11px; color: var(--muted); margin: 4px 0 2px; }
+.agent-graph-card .ctx-tag { font-weight: 500; }
 
 .bridge-card { margin-top: 14px; padding: 10px 12px; border-radius: 6px; background: rgba(76, 143, 224, 0.08); border: 1px solid rgba(76, 143, 224, 0.25); }
 .bridge-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 600; margin-bottom: 4px; }
