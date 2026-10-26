@@ -2,7 +2,7 @@
   "name": "claude-usage-monitor",
   "displayName": "Claude Usage Monitor",
   "description": "Local per-conversation Claude Code and Antigravity token usage, quota monitoring, and cross-agent context handoff bridge in the status bar and sidebar.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "publisher": "hulsambath",
   "repository": {
     "type": "git",
@@ -38,6 +38,18 @@
         "title": "Copy Agent Context Handoff",
         "category": "AI Usage",
         "icon": "$(copy)"
+      },
+      {
+        "command": "claudeUsage.handoffToClaude",
+        "title": "Handoff to Claude Code (from Antigravity)",
+        "category": "AI Usage",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "claudeUsage.handoffToAntigravity",
+        "title": "Handoff to Antigravity (from Claude Code)",
+        "category": "AI Usage",
+        "icon": "$(arrow-swap)"
       },
       {
         "command": "claudeUsage.saveHandoff",

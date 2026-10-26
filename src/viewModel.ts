@@ -34,6 +34,18 @@ export interface AgentCardVM {
     text: string;
     action?: 'install';
   };
+  handoff?: {
+    sessionId: string;
+    targetAgent: AgentType;
+    label: string;
+  };
+}
+
+export interface ContextBridgeItemVM {
+  sourceSessionId: string;
+  sourceTitle: string;
+  sourceAgent: AgentType;
+  targetAgent: AgentType;
 }
 
 export interface QuotaVM {
@@ -51,7 +63,11 @@ export interface QuotaVM {
   note?: { text: string; action?: 'install' };
   antigravityUsage?: { tokens: string; count: number; activeCount: number; resetLine?: string };
   claudeUsage?: { tokens: string; count: number; activeCount: number };
-  contextBridge?: { sourceSessionId: string; sourceTitle: string; sourceAgent: AgentType; targetAgent: AgentType };
+  contextBridge?: ContextBridgeItemVM;
+  contextBridges?: {
+    toAntigravity?: ContextBridgeItemVM;
+    toClaude?: ContextBridgeItemVM;
+  };
   agentFilter?: AgentType | 'all';
   counts?: { all: number; claude: number; antigravity: number };
   claudeCard?: AgentCardVM;
@@ -231,7 +247,49 @@ function buildQuota(snap: UsageSnapshot, warnAt: number, filter: AgentType | 'al
     resetLine: agyResetLine,
   } : undefined;
 
-  let contextBridge: QuotaVM['contextBridge'] | undefined;
+  const latestClaude = claudeSessions[0];
+  const latestAgy = agySessions[0];
+
+  if (latestClaude) {
+    claudeCard.handoff = {
+      sessionId: latestClaude.sessionId,
+      targetAgent: 'antigravity',
+      label: 'Handoff to Antigravity',
+    };
+  }
+
+  if (latestAgy) {
+    antigravityCard.handoff = {
+      sessionId: latestAgy.sessionId,
+      targetAgent: 'claude',
+      label: 'Handoff to Claude',
+    };
+  }
+
+  const toAntigravity: ContextBridgeItemVM | undefined = latestClaude
+    ? {
+        sourceSessionId: latestClaude.sessionId,
+        sourceTitle: latestClaude.title || latestClaude.live?.name || latestClaude.sessionId.slice(0, 8),
+        sourceAgent: 'claude',
+        targetAgent: 'antigravity',
+      }
+    : undefined;
+
+  const toClaude: ContextBridgeItemVM | undefined = latestAgy
+    ? {
+        sourceSessionId: latestAgy.sessionId,
+        sourceTitle: latestAgy.title || latestAgy.live?.name || latestAgy.sessionId.slice(0, 8),
+        sourceAgent: 'antigravity',
+        targetAgent: 'claude',
+      }
+    : undefined;
+
+  const contextBridges = (toAntigravity || toClaude) ? {
+    toAntigravity,
+    toClaude,
+  } : undefined;
+
+  let contextBridge = toClaude || toAntigravity;
   if (snap.sessions.length > 0) {
     const mostRecent = snap.sessions[0];
     const sourceAgent: AgentType = mostRecent.agent || 'claude';
@@ -316,6 +374,7 @@ function buildQuota(snap: UsageSnapshot, warnAt: number, filter: AgentType | 'al
     note,
     antigravityUsage,
     contextBridge,
+    contextBridges,
     agentFilter: filter,
     counts,
     claudeCard,

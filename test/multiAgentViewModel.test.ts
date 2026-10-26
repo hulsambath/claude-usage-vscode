@@ -108,6 +108,26 @@ describe('multi-agent viewModel', () => {
     });
   });
 
+  it('supports two-way context handoff between Claude and Antigravity', () => {
+    const vm = buildViewModel(snap, 80, 'all');
+    expect(vm.quota.contextBridges?.toClaude).toEqual({
+      sourceSessionId: 'a-1',
+      sourceTitle: 'Antigravity Build Fix',
+      sourceAgent: 'antigravity',
+      targetAgent: 'claude',
+    });
+    expect(vm.quota.contextBridges?.toAntigravity).toEqual({
+      sourceSessionId: 'c-1',
+      sourceTitle: 'Claude Refactoring',
+      sourceAgent: 'claude',
+      targetAgent: 'antigravity',
+    });
+
+    const html = renderBody(vm);
+    expect(html).toContain('Copy Handoff to Claude');
+    expect(html).toContain('Copy Handoff to Antigravity');
+  });
+
   it('renders dual graphs for both Claude and Antigravity in HTML', () => {
     const vm = buildViewModel(snap, 80, 'all');
     const html = renderBody(vm);

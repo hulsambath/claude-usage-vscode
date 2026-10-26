@@ -62,7 +62,15 @@ export class UsageStatusBar implements vscode.Disposable {
       if (q.antigravityUsage.resetLine) md.appendText(`${q.antigravityUsage.resetLine}\n\n`);
     }
 
-    if (q.contextBridge) {
+    if (q.contextBridges) {
+      if (q.contextBridges.toClaude && q.contextBridges.toAntigravity) {
+        md.appendMarkdown(`---\n\n⚡ **Context Bridge**: Ready both ways (Claude ⇄ Antigravity)\n\n`);
+      } else if (q.contextBridges.toClaude) {
+        md.appendMarkdown(`---\n\n⚡ **Context Bridge**: Handoff to Claude ready (from Antigravity)\n\n`);
+      } else if (q.contextBridges.toAntigravity) {
+        md.appendMarkdown(`---\n\n⚡ **Context Bridge**: Handoff to Antigravity ready (from Claude)\n\n`);
+      }
+    } else if (q.contextBridge) {
       md.appendMarkdown(`---\n\n⚡ **Context Bridge Ready**: Handoff from ${q.contextBridge.sourceAgent === 'claude' ? 'Claude' : 'Antigravity'} to ${q.contextBridge.targetAgent === 'claude' ? 'Claude' : 'Antigravity'}\n\n`);
     }
 

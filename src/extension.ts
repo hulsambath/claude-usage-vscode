@@ -61,6 +61,41 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   };
 
+  const copyHandoffTo = async (targetAgent: AgentType) => {
+    if (!latest || latest.sessions.length === 0) {
+      void vscode.window.showWarningMessage('No active or recent AI conversation found to hand off.');
+      return;
+    }
+    const sourceAgent: AgentType = targetAgent === 'claude' ? 'antigravity' : 'claude';
+    const sourceName = sourceAgent === 'claude' ? 'Claude Code' : 'Antigravity';
+    const targetName = targetAgent === 'claude' ? 'Claude Code' : 'Antigravity';
+
+    const matchingSessions = latest.sessions.filter((s) => (s.agent || 'claude') === sourceAgent);
+    let session: SessionView | undefined;
+    if (matchingSessions.length === 1) {
+      session = matchingSessions[0];
+    } else if (matchingSessions.length > 1) {
+      const items = matchingSessions.map((s) => ({
+        label: `${s.agent === 'claude' ? '🟣 Claude' : '🔵 Antigravity'}: ${s.live?.name || s.title || s.sessionId.slice(0, 8)}`,
+        description: s.title && s.title !== s.live?.name ? s.title : s.live?.cwd || s.usage?.cwd || '',
+        detail: s.filesTouched && s.filesTouched.length > 0 ? `Files: ${s.filesTouched.join(', ')}` : undefined,
+        session: s,
+      }));
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: `Select ${sourceName} session to hand off to ${targetName}`,
+      });
+      session = picked?.session;
+    } else {
+      session = await findSession();
+    }
+    if (!session) return;
+    const prompt = generateHandoffPrompt({ sourceSession: session, targetAgent });
+    await vscode.env.clipboard.writeText(prompt);
+    void vscode.window.showInformationMessage(
+      `Context handoff copied to clipboard! Paste it into ${targetName} to continue seamlessly.`,
+    );
+  };
+
   const saveHandoff = async (sessionId?: string) => {
     const session = await findSession(sessionId);
     if (!session) {
@@ -166,6 +201,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeWorkspaceFolders(() => void refresh()),
     vscode.commands.registerCommand('claudeUsage.refresh', refresh),
     vscode.commands.registerCommand('claudeUsage.copyHandoff', (id?: string) => copyHandoff(id)),
+    vscode.commands.registerCommand('claudeUsage.handoffToClaude', () => copyHandoffTo('claude')),
+    vscode.commands.registerCommand('claudeUsage.handoffToAntigravity', () => copyHandoffTo('antigravity')),
     vscode.commands.registerCommand('claudeUsage.saveHandoff', (id?: string) => saveHandoff(id)),
     vscode.commands.registerCommand('claudeUsage.show', async () => {
       if (await focusFirst(['claudeUsage.sideView', 'claudeUsage.view'], (c) => vscode.commands.executeCommand(c))) return;

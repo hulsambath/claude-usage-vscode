@@ -51,6 +51,11 @@ function renderClaudeCard(c: AgentCardVM): string {
     ${weekly}
     ${line('reset', c.resetLine)}
     ${note}
+    ${
+      c.handoff
+        ? `<div class="card-action"><button class="btn-card-action" data-action="handoff" data-id="${esc(c.handoff.sessionId)}" title="Handoff this Claude session to Antigravity">⚡ Handoff to Antigravity</button></div>`
+        : ''
+    }
   </div>`;
 }
 
@@ -71,6 +76,11 @@ function renderAntigravityCard(a: AgentCardVM): string {
     ${ctx}
     ${line('tokens', a.tokensLine)}
     ${line('reset', a.resetLine)}
+    ${
+      a.handoff
+        ? `<div class="card-action"><button class="btn-card-action" data-action="handoff" data-id="${esc(a.handoff.sessionId)}" title="Handoff this Antigravity session to Claude Code">⚡ Handoff to Claude</button></div>`
+        : ''
+    }
   </div>`;
 }
 
@@ -100,19 +110,81 @@ function renderQuota(q: QuotaVM): string {
       }</div>`
     : '';
 
-  const bridgeCard = q.contextBridge
-    ? `<div class="bridge-card" role="region" aria-label="Context Bridge">
+  let bridgeCard = '';
+  const toClaude = q.contextBridges?.toClaude;
+  const toAntigravity = q.contextBridges?.toAntigravity;
+
+  if (toClaude && toAntigravity) {
+    bridgeCard = `<div class="bridge-card" role="region" aria-label="Context Bridge">
       <div class="bridge-head">
         <span class="bridge-badge">⚡ Context Bridge</span>
-        <span class="bridge-target">Handoff to ${q.contextBridge.targetAgent === 'claude' ? 'Claude' : 'Antigravity'}</span>
+        <span class="bridge-target">Cross-Agent Handoff</span>
       </div>
-      <p class="bridge-desc">Switching agents? Ready to hand off <strong>${esc(q.contextBridge.sourceTitle)}</strong>.</p>
+      <div class="bridge-grid">
+        <div class="bridge-opt">
+          <div class="bridge-opt-title">
+            <span class="badge antigravity">Antigravity</span>
+            <span class="bridge-arrow">➔</span>
+            <span class="badge claude">Claude Code</span>
+          </div>
+          <p class="bridge-desc">Hand off <strong>${esc(toClaude.sourceTitle)}</strong> to Claude</p>
+          <div class="bridge-btns">
+            <button class="btn-primary" data-action="handoff" data-id="${esc(toClaude.sourceSessionId)}">📋 Copy Handoff to Claude</button>
+            <button class="btn-subtle" data-action="saveHandoff" data-id="${esc(toClaude.sourceSessionId)}">💾 Save</button>
+          </div>
+        </div>
+        <div class="bridge-opt">
+          <div class="bridge-opt-title">
+            <span class="badge claude">Claude Code</span>
+            <span class="bridge-arrow">➔</span>
+            <span class="badge antigravity">Antigravity</span>
+          </div>
+          <p class="bridge-desc">Hand off <strong>${esc(toAntigravity.sourceTitle)}</strong> to Antigravity</p>
+          <div class="bridge-btns">
+            <button class="btn-primary" data-action="handoff" data-id="${esc(toAntigravity.sourceSessionId)}">📋 Copy Handoff to Antigravity</button>
+            <button class="btn-subtle" data-action="saveHandoff" data-id="${esc(toAntigravity.sourceSessionId)}">💾 Save</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  } else if (toClaude) {
+    bridgeCard = `<div class="bridge-card" role="region" aria-label="Context Bridge">
+      <div class="bridge-head">
+        <span class="bridge-badge">⚡ Context Bridge</span>
+        <span class="bridge-target">Handoff to Claude</span>
+      </div>
+      <p class="bridge-desc">Switching agents? Ready to hand off <strong>${esc(toClaude.sourceTitle)}</strong> to Claude Code.</p>
+      <div class="bridge-btns">
+        <button class="btn-primary" data-action="handoff" data-id="${esc(toClaude.sourceSessionId)}">📋 Copy Handoff to Claude</button>
+        <button class="btn-subtle" data-action="saveHandoff" data-id="${esc(toClaude.sourceSessionId)}">💾 Save .agent-handoff.md</button>
+      </div>
+    </div>`;
+  } else if (toAntigravity) {
+    bridgeCard = `<div class="bridge-card" role="region" aria-label="Context Bridge">
+      <div class="bridge-head">
+        <span class="bridge-badge">⚡ Context Bridge</span>
+        <span class="bridge-target">Handoff to Antigravity</span>
+      </div>
+      <p class="bridge-desc">Switching agents? Ready to hand off <strong>${esc(toAntigravity.sourceTitle)}</strong> to Antigravity.</p>
+      <div class="bridge-btns">
+        <button class="btn-primary" data-action="handoff" data-id="${esc(toAntigravity.sourceSessionId)}">📋 Copy Handoff to Antigravity</button>
+        <button class="btn-subtle" data-action="saveHandoff" data-id="${esc(toAntigravity.sourceSessionId)}">💾 Save .agent-handoff.md</button>
+      </div>
+    </div>`;
+  } else if (q.contextBridge) {
+    const targetName = q.contextBridge.targetAgent === 'claude' ? 'Claude' : 'Antigravity';
+    bridgeCard = `<div class="bridge-card" role="region" aria-label="Context Bridge">
+      <div class="bridge-head">
+        <span class="bridge-badge">⚡ Context Bridge</span>
+        <span class="bridge-target">Handoff to ${targetName}</span>
+      </div>
+      <p class="bridge-desc">Switching agents? Ready to hand off <strong>${esc(q.contextBridge.sourceTitle)}</strong> to ${targetName}.</p>
       <div class="bridge-btns">
         <button class="btn-primary" data-action="handoff" data-id="${esc(q.contextBridge.sourceSessionId)}">📋 Copy Handoff Prompt</button>
         <button class="btn-subtle" data-action="saveHandoff" data-id="${esc(q.contextBridge.sourceSessionId)}">💾 Save .agent-handoff.md</button>
       </div>
-    </div>`
-    : '';
+    </div>`;
+  }
 
   const dualGraphs =
     q.claudeCard && q.antigravityCard
@@ -139,10 +211,10 @@ function renderSession(s: SessionVM): string {
     ? `<div class="ctx"><div class="track thin"><span style="width:${pct(s.context.usedPct)}%"></span></div><span>${esc(s.context.line)}</span></div>`
     : '';
   const rows = s.details.map(([k, v]) => `<dt title="${esc(k)}">${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
-  const open = s.canOpen ? `<button class="link" data-action="open" data-id="${esc(s.id)}">Open transcript</button>` : '';
+  const open = s.canOpen ? `<button class="btn-quick subtle" data-action="open" data-id="${esc(s.id)}">Open transcript</button>` : '';
   const handoffTarget = s.agent === 'claude' ? 'Antigravity' : 'Claude';
-  const handoffBtn = `<button class="link handoff-btn" data-action="handoff" data-id="${esc(s.id)}">📋 Handoff to ${handoffTarget}</button>`;
-  const saveBtn = `<button class="link save-btn" data-action="saveHandoff" data-id="${esc(s.id)}">💾 Save Bridge File</button>`;
+  const handoffBtn = `<button class="btn-quick" data-action="handoff" data-id="${esc(s.id)}" title="Copy handoff prompt to ${handoffTarget}">📋 Handoff to ${handoffTarget}</button>`;
+  const saveBtn = `<button class="btn-quick subtle" data-action="saveHandoff" data-id="${esc(s.id)}" title="Save .agent-handoff.md">💾 Save</button>`;
   const title = s.title && s.title !== s.name ? `<p class="title">${esc(s.title)}</p>` : '';
   const agentBadge = `<span class="badge ${s.agent}">${s.agent === 'antigravity' ? 'Antigravity' : 'Claude'}</span>`;
   const filesTag = s.filesTouched && s.filesTouched.length > 0 ? `<span class="files-tag">📁 ${s.filesTouched.length} modified</span>` : '';
@@ -157,14 +229,14 @@ function renderSession(s: SessionVM): string {
     ${title}
     <p class="meta">${esc(s.meta)}${filesTag ? ` · ${filesTag}` : ''}</p>
     ${ctx}
+    <div class="conv-actions">
+      ${handoffBtn}
+      ${saveBtn}
+      ${open}
+    </div>
     <details data-id="${esc(s.id)}">
       <summary>Token & context breakdown</summary>
       <dl>${rows}</dl>
-      <div class="session-actions">
-        ${open}
-        ${handoffBtn}
-        ${saveBtn}
-      </div>
     </details>
   </article>`;
 }
