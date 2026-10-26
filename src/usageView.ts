@@ -4,7 +4,7 @@ import { renderBody } from './render';
 import { ViewModel } from './viewModel';
 
 export type ViewMessage = {
-  type: 'ready' | 'refresh' | 'install' | 'open' | 'handoff' | 'saveHandoff' | 'filter';
+  type: 'ready' | 'refresh' | 'install' | 'open' | 'handoff' | 'saveHandoff' | 'filter' | 'dispatch';
   id?: string;
   filter?: 'all' | 'claude' | 'antigravity';
 };
@@ -86,6 +86,12 @@ h1, h2 { margin: 0; font-weight: 600; }
 .btn-primary:hover { background: var(--vscode-button-hoverBackground); }
 .btn-subtle { font-size: 11px; padding: 3px 8px; border-radius: 3px; background: var(--track); color: var(--fg); border: 1px solid var(--line); }
 .btn-subtle:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.15)); }
+
+.dispatcher-card { margin-top: 10px; padding: 10px 12px; border-radius: 6px; background: rgba(142, 68, 173, 0.08); border: 1px solid rgba(142, 68, 173, 0.25); }
+.disp-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+.disp-badge { color: var(--fg); }
+.disp-count { color: var(--muted); font-size: 11px; }
+.disp-desc { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
 
 .conv-actions { display: flex; gap: 6px; margin: 6px 0 2px 16px; flex-wrap: wrap; }
 .btn-quick { font-size: 11px; padding: 2px 6px; border-radius: 3px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; }

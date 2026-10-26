@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { generateHandoffPrompt, saveHandoffFile } from '../src/handoff';
+import { generateDispatchMessage, generateHandoffPrompt, saveHandoffFile } from '../src/handoff';
 import { SessionView } from '../src/types';
 
 describe('generateHandoffPrompt', () => {
@@ -67,5 +67,40 @@ describe('saveHandoffFile', () => {
     expect(filePath).toBe(join(dir, '.agent-handoff.md'));
     const written = readFileSync(filePath, 'utf8');
     expect(written).toBe(content);
+  });
+});
+
+describe('generateDispatchMessage', () => {
+  it('formats custom message and attached context from source session to target session', () => {
+    const chat1: SessionView = {
+      sessionId: 'chat-1',
+      agent: 'claude',
+      title: 'Backend API Service',
+      inWorkspace: true,
+      userPrompt: 'Implement REST endpoints for users',
+      filesTouched: ['/app/api.ts'],
+      commandsRun: ['npm test'],
+      lastThinking: 'All API routes are implemented and passing tests.',
+    };
+
+    const chat2: SessionView = {
+      sessionId: 'chat-2',
+      agent: 'antigravity',
+      title: 'Flutter UI Client',
+      inWorkspace: true,
+    };
+
+    const msg = generateDispatchMessage({
+      sourceSession: chat1,
+      targetSession: chat2,
+      customMessage: 'I finished the API schema. Please implement the client UI widgets.',
+      attachContext: true,
+    });
+
+    expect(msg).toContain('💬 [Inter-Session Communication: Claude Code (Backend API Service) ➔ Antigravity (Flutter UI Client)]');
+    expect(msg).toContain('I finished the API schema. Please implement the client UI widgets.');
+    expect(msg).toContain('- **Goal/Prompt:** Implement REST endpoints for users');
+    expect(msg).toContain('`/app/api.ts`');
+    expect(msg).toContain('All API routes are implemented and passing tests.');
   });
 });

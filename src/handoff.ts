@@ -73,3 +73,63 @@ export async function saveHandoffFile(
   await writeFile(filePath, content, 'utf8');
   return filePath;
 }
+
+export interface DispatchMessageOptions {
+  sourceSession: SessionView;
+  targetSession?: SessionView;
+  targetAgent?: AgentType;
+  customMessage?: string;
+  attachContext?: boolean;
+}
+
+export function generateDispatchMessage(options: DispatchMessageOptions): string {
+  const { sourceSession, targetSession, customMessage, attachContext = true } = options;
+  const sourceAgent: AgentType = sourceSession.agent ?? 'claude';
+  const targetAgent: AgentType =
+    targetSession?.agent ?? options.targetAgent ?? (sourceAgent === 'claude' ? 'antigravity' : 'claude');
+
+  const sourceName = `${sourceAgent === 'claude' ? 'Claude Code' : 'Antigravity'} (${sourceSession.title || sourceSession.live?.name || sourceSession.sessionId.slice(0, 8)})`;
+  const targetName = targetSession
+    ? `${targetSession.agent === 'claude' ? 'Claude Code' : 'Antigravity'} (${targetSession.title || targetSession.live?.name || targetSession.sessionId.slice(0, 8)})`
+    : targetAgent === 'claude'
+      ? 'Claude Code'
+      : 'Antigravity';
+
+  const lines: string[] = [];
+  lines.push(`💬 [Inter-Session Communication: ${sourceName} ➔ ${targetName}]`);
+  lines.push('');
+
+  if (customMessage && customMessage.trim()) {
+    lines.push('### ✉️ Message / Instruction:');
+    lines.push(customMessage.trim());
+    lines.push('');
+  }
+
+  if (attachContext) {
+    lines.push('### 📋 Context from Sender:');
+    if (sourceSession.userPrompt) {
+      lines.push(`- **Goal/Prompt:** ${sourceSession.userPrompt}`);
+    } else if (sourceSession.title) {
+      lines.push(`- **Goal/Prompt:** ${sourceSession.title}`);
+    }
+
+    if (sourceSession.filesTouched && sourceSession.filesTouched.length > 0) {
+      const files = sourceSession.filesTouched.slice(-8).map((f) => `\`${f}\``).join(', ');
+      lines.push(`- **Files touched:** ${files}`);
+    }
+
+    if (sourceSession.commandsRun && sourceSession.commandsRun.length > 0) {
+      const cmds = sourceSession.commandsRun.slice(-5).map((c) => `\`${c}\``).join(', ');
+      lines.push(`- **Recent commands:** ${cmds}`);
+    }
+
+    if (sourceSession.lastThinking) {
+      lines.push(`- **Latest findings/state:** ${sourceSession.lastThinking}`);
+    }
+
+    lines.push('');
+    lines.push(`Please incorporate the above message and context from ${sourceName} into your ongoing work.`);
+  }
+
+  return lines.join('\n');
+}

@@ -7,7 +7,7 @@ import { AntigravityCollector } from './antigravityCollector';
 import { antigravityPaths, defaultAntigravityRoot } from './antigravityPaths';
 import { Collector } from './collector';
 import { focusFirst } from './focus';
-import { generateHandoffPrompt, saveHandoffFile } from './handoff';
+import { generateDispatchMessage, generateHandoffPrompt, saveHandoffFile } from './handoff';
 import { defaultClaudeRoot, paths } from './paths';
 import { bridgeCommand, pickNodeBinary, planStatusLineInstall } from './settingsPlan';
 import { UsageStatusBar } from './statusBar';
@@ -111,12 +111,125 @@ export function activate(context: vscode.ExtensionContext): void {
     void vscode.window.showInformationMessage(`Saved context bridge to ${filePath} and opened in editor.`);
   };
 
+  const findTerminalForSession = async (session: SessionView): Promise<vscode.Terminal | undefined> => {
+    const terminals = vscode.window.terminals;
+    if (terminals.length === 0) return undefined;
+
+    if (session.live?.pid) {
+      for (const t of terminals) {
+        const pid = await t.processId;
+        if (pid === session.live.pid) return t;
+      }
+    }
+
+    const targetId = session.sessionId.toLowerCase();
+    const sessionName = (session.live?.name || session.title || '').toLowerCase();
+
+    for (const t of terminals) {
+      const tName = t.name.toLowerCase();
+      if (sessionName && tName.includes(sessionName)) return t;
+      if (tName.includes(targetId.slice(0, 8))) return t;
+    }
+
+    return undefined;
+  };
+
+  const dispatchSessionMessage = async (sourceId?: string) => {
+    if (!latest || latest.sessions.length === 0) {
+      void vscode.window.showWarningMessage('No active AI conversations found.');
+      return;
+    }
+
+    let sourceSession: SessionView | undefined;
+    if (sourceId) {
+      sourceSession = latest.sessions.find((s) => s.sessionId === sourceId);
+    }
+    if (!sourceSession) {
+      const items = latest.sessions.map((s) => ({
+        label: `${s.agent === 'claude' ? '🟣 Claude' : '🔵 Antigravity'}: ${s.live?.name || s.title || s.sessionId.slice(0, 8)}`,
+        description: s.title && s.title !== s.live?.name ? s.title : s.live?.cwd || s.usage?.cwd || '',
+        session: s,
+      }));
+      const picked = await vscode.window.showQuickPick(items, {
+        title: 'Step 1/3: Select Sender Session',
+        placeHolder: 'Which AI conversation is sending the message?',
+      });
+      if (!picked) return;
+      sourceSession = picked.session;
+    }
+
+    const otherSessions = latest.sessions.filter((s) => s.sessionId !== sourceSession!.sessionId);
+    interface TargetOption extends vscode.QuickPickItem {
+      session?: SessionView;
+      targetType: 'session' | 'terminal' | 'clipboard';
+    }
+    const targetItems: TargetOption[] = otherSessions.map((s) => ({
+      label: `${s.agent === 'claude' ? '🟣 Claude' : '🔵 Antigravity'}: ${s.live?.name || s.title || s.sessionId.slice(0, 8)}`,
+      description: s.title && s.title !== s.live?.name ? s.title : s.live?.cwd || s.usage?.cwd || '',
+      session: s,
+      targetType: 'session' as const,
+    }));
+
+    targetItems.push(
+      { label: '📺 Active VS Code Terminal', description: 'Paste directly into currently active terminal', targetType: 'terminal' },
+      { label: '📋 Clipboard Only', description: 'Copy formatted prompt to paste anywhere', targetType: 'clipboard' },
+    );
+
+    const pickedTarget = await vscode.window.showQuickPick(targetItems, {
+      title: 'Step 2/3: Select Recipient Session',
+      placeHolder: 'Which conversation or terminal should receive the message?',
+    });
+    if (!pickedTarget) return;
+
+    const sourceAgentName = sourceSession.agent === 'claude' ? 'Claude Code' : 'Antigravity';
+    const targetAgentName = pickedTarget.session
+      ? pickedTarget.session.agent === 'claude' ? 'Claude Code' : 'Antigravity'
+      : 'Target';
+
+    const input = await vscode.window.showInputBox({
+      title: `Step 3/3: Message from ${sourceAgentName} to ${targetAgentName}`,
+      prompt: 'Enter instructions/questions for the other session (or press Enter to forward findings snapshot):',
+      placeHolder: 'e.g. I updated the backend models. Please implement the frontend widgets and unit tests.',
+    });
+    if (input === undefined) return;
+
+    const formatted = generateDispatchMessage({
+      sourceSession,
+      targetSession: pickedTarget.session,
+      customMessage: input || undefined,
+      attachContext: true,
+    });
+
+    await vscode.env.clipboard.writeText(formatted);
+
+    if (pickedTarget.targetType === 'terminal' || (pickedTarget.targetType === 'session' && pickedTarget.session)) {
+      const term =
+        pickedTarget.targetType === 'terminal'
+          ? vscode.window.activeTerminal
+          : await findTerminalForSession(pickedTarget.session!);
+
+      if (term) {
+        term.sendText(formatted, false);
+        term.show(true);
+        void vscode.window.showInformationMessage(
+          `Message delivered to ${pickedTarget.label} terminal & copied to clipboard! Press Enter in terminal to run.`,
+        );
+        return;
+      }
+    }
+
+    void vscode.window.showInformationMessage(
+      `Message formatted & copied to clipboard! Paste it into ${pickedTarget.label} to continue seamlessly.`,
+    );
+  };
+
   const onMessage = (m: ViewMessage) => {
     if (m.type === 'refresh') void refresh();
     if (m.type === 'install') void vscode.commands.executeCommand('claudeUsage.installBridge');
     if (m.type === 'open') void vscode.commands.executeCommand('claudeUsage.openTranscript', m.id);
     if (m.type === 'handoff') void copyHandoff(m.id);
     if (m.type === 'saveHandoff') void saveHandoff(m.id);
+    if (m.type === 'dispatch') void dispatchSessionMessage(m.id);
     if (m.type === 'filter') {
       currentFilter = m.filter || 'all';
       void refresh();
@@ -201,6 +314,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeWorkspaceFolders(() => void refresh()),
     vscode.commands.registerCommand('claudeUsage.refresh', refresh),
     vscode.commands.registerCommand('claudeUsage.copyHandoff', (id?: string) => copyHandoff(id)),
+    vscode.commands.registerCommand('claudeUsage.dispatch', (id?: string) => dispatchSessionMessage(id)),
     vscode.commands.registerCommand('claudeUsage.handoffToClaude', () => copyHandoffTo('claude')),
     vscode.commands.registerCommand('claudeUsage.handoffToAntigravity', () => copyHandoffTo('antigravity')),
     vscode.commands.registerCommand('claudeUsage.saveHandoff', (id?: string) => saveHandoff(id)),

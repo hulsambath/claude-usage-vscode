@@ -198,11 +198,24 @@ function renderQuota(q: QuotaVM): string {
         ${weekly}
         ${note}`;
 
+  const dispatcherCard =
+    q.counts && q.counts.all >= 2
+      ? `<div class="dispatcher-card" role="region" aria-label="Inter-Session Dispatcher">
+          <div class="disp-head">
+            <span class="disp-badge">💬 Inter-Session Chat</span>
+            <span class="disp-count">${q.counts.all} conversations</span>
+          </div>
+          <p class="disp-desc">Route instructions or context findings between your running AI sessions.</p>
+          <button class="btn-primary" data-action="dispatch">💬 Route Message Between Sessions</button>
+        </div>`
+      : '';
+
   return `<section class="quota level-${q.level}" aria-label="5-hour quota">
     <div class="head"><h1>${esc(q.headline)}</h1>${q.state === 'local' ? '<span class="tag">estimate</span>' : ''}</div>
     ${line('reset', q.resetLine)}
     ${dualGraphs}
     ${bridgeCard}
+    ${dispatcherCard}
   </section>`;
 }
 
@@ -214,6 +227,7 @@ function renderSession(s: SessionVM): string {
   const open = s.canOpen ? `<button class="btn-quick subtle" data-action="open" data-id="${esc(s.id)}">Open transcript</button>` : '';
   const handoffTarget = s.agent === 'claude' ? 'Antigravity' : 'Claude';
   const handoffBtn = `<button class="btn-quick" data-action="handoff" data-id="${esc(s.id)}" title="Copy handoff prompt to ${handoffTarget}">📋 Handoff to ${handoffTarget}</button>`;
+  const dispatchBtn = `<button class="btn-quick subtle" data-action="dispatch" data-id="${esc(s.id)}" title="Send message or context from this session to another session">💬 Talk to...</button>`;
   const saveBtn = `<button class="btn-quick subtle" data-action="saveHandoff" data-id="${esc(s.id)}" title="Save .agent-handoff.md">💾 Save</button>`;
   const title = s.title && s.title !== s.name ? `<p class="title">${esc(s.title)}</p>` : '';
   const agentBadge = `<span class="badge ${s.agent}">${s.agent === 'antigravity' ? 'Antigravity' : 'Claude'}</span>`;
@@ -231,6 +245,7 @@ function renderSession(s: SessionVM): string {
     ${ctx}
     <div class="conv-actions">
       ${handoffBtn}
+      ${dispatchBtn}
       ${saveBtn}
       ${open}
     </div>
