@@ -2,7 +2,7 @@
   "name": "claude-usage-monitor",
   "displayName": "Claude Usage Monitor",
   "description": "Local per-conversation Claude Code and Antigravity token usage, quota monitoring, and cross-agent context handoff bridge in the status bar and sidebar.",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "publisher": "hulsambath",
   "repository": {
     "type": "git",

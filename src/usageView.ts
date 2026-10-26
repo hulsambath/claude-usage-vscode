@@ -107,9 +107,9 @@ h1, h2 { margin: 0; font-weight: 600; }
 .ctx .track { margin-bottom: 3px; }
 details { margin: 6px 0 0 16px; }
 summary { cursor: pointer; color: var(--muted); font-size: 12px; }
-dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 6px 0; font-size: 12px; }
-dt { color: var(--muted); }
-dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin: 6px 0; font-size: 12px; }
+dt { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .session-actions { display: flex; gap: 10px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .empty { color: var(--muted); padding: 8px 0; }
 

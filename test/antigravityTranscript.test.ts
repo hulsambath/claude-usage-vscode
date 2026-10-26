@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanAntigravityPrompt, parseAntigravityTranscript } from '../src/antigravityTranscript';
+import { cleanAntigravityPrompt, extractAntigravityModel, parseAntigravityTranscript } from '../src/antigravityTranscript';
 
 describe('cleanAntigravityPrompt', () => {
   it('extracts request inside USER_REQUEST tags and strips metadata', () => {
@@ -17,6 +17,25 @@ The user changed setting \`Model Selection\` from None to Gemini 3.8 Flash (Medi
 
   it('handles plain text prompts without XML tags', () => {
     expect(cleanAntigravityPrompt('Check repository status')).toBe('Check repository status');
+  });
+});
+
+describe('extractAntigravityModel', () => {
+  it('extracts model cleanly and strips trailing system instructions', () => {
+    const content = `<USER_SETTINGS_CHANGE>
+The user changed setting \`Model Selection\` from None to Gemini 3.8 Flash (Medium). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
+</USER_SETTINGS_CHANGE>`;
+    expect(extractAntigravityModel(content)).toBe('Gemini 3.8 Flash (Medium)');
+  });
+
+  it('handles simple model selection without instructions', () => {
+    const content = 'The user changed setting `Model Selection` from None to Gemini 3.8 Pro.';
+    expect(extractAntigravityModel(content)).toBe('Gemini 3.8 Pro');
+  });
+
+  it('returns undefined if model is None or absent', () => {
+    expect(extractAntigravityModel('The user changed setting `Model Selection` from None to None.')).toBeUndefined();
+    expect(extractAntigravityModel('No settings change here')).toBeUndefined();
   });
 });
 
@@ -83,5 +102,31 @@ describe('parseAntigravityTranscript', () => {
     ]);
     expect(result.commandsRun).toEqual(['npm test']);
     expect(result.lastThinking).toBe('I need to inspect the existing user test suite and add a new test case.');
+  });
+
+  it('correctly parses model when prompt contains full Antigravity system instructions', () => {
+    const lines = [
+      JSON.stringify({
+        step_index: 0,
+        source: 'USER_EXPLICIT',
+        type: 'USER_INPUT',
+        content: `<USER_REQUEST>Fix bug</USER_REQUEST>
+<USER_SETTINGS_CHANGE>
+The user changed setting \`Model Selection\` from None to Gemini 3.8 Flash (Medium). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
+</USER_SETTINGS_CHANGE>`,
+      }),
+      JSON.stringify({
+        step_index: 1,
+        source: 'MODEL',
+        type: 'PLANNER_RESPONSE',
+        input_tokens: 100,
+        output_tokens: 50,
+      }),
+    ].join('\n');
+
+    const result = parseAntigravityTranscript(lines, 'sess-456');
+    expect(result.model).toBe('Gemini 3.8 Flash (Medium)');
+    expect(result.usage.byModel['Gemini 3.8 Flash (Medium)']).toBeDefined();
+    expect(result.usage.byModel['Gemini 3.8 Flash (Medium)'].input).toBe(100);
   });
 });

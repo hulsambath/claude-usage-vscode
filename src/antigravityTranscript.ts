@@ -19,6 +19,26 @@ export function cleanAntigravityPrompt(raw: string): string {
   return prompt.trim();
 }
 
+export function extractAntigravityModel(content: string): string | undefined {
+  const mMatch = content.match(/Model Selection` from .*? to ([^\n<]+)/i);
+  if (!mMatch || !mMatch[1]) return undefined;
+
+  let candidate = mMatch[1].trim();
+  // Strip trailing system instructions like ". No need to comment..." or ". If reporting..."
+  candidate = candidate.replace(/\.\s*(?:No need to comment|If reporting)[\s\S]*/i, '');
+  // Strip trailing period or whitespace
+  candidate = candidate.replace(/[.\s]+$/, '').trim();
+
+  if (!candidate || candidate === 'None') return undefined;
+  if (candidate.length > 50) {
+    candidate = candidate.split('.')[0].trim();
+  }
+  if (candidate.length > 40) {
+    candidate = candidate.slice(0, 40).trim();
+  }
+  return candidate || undefined;
+}
+
 export function parseAntigravityTranscript(text: string, sessionId: string, defaultModel = 'Gemini 3.8 Flash'): AntigravityTranscriptData {
   let model = defaultModel;
   let firstUserPrompt: string | undefined;
@@ -44,12 +64,9 @@ export function parseAntigravityTranscript(text: string, sessionId: string, defa
       if (!firstUserPrompt && prompt) firstUserPrompt = prompt;
       if (prompt) lastUserPrompt = prompt;
 
-      const mMatch = d.content.match(/Model Selection` from .*? to ([^\n<]+)/);
-      if (mMatch && mMatch[1]) {
-        const candidate = mMatch[1].replace(/\.$/, '').trim();
-        if (candidate && candidate !== 'None') {
-          model = candidate;
-        }
+      const detectedModel = extractAntigravityModel(d.content);
+      if (detectedModel) {
+        model = detectedModel;
       }
     }
 

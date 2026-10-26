@@ -138,7 +138,7 @@ function renderSession(s: SessionVM): string {
   const ctx = s.context
     ? `<div class="ctx"><div class="track thin"><span style="width:${pct(s.context.usedPct)}%"></span></div><span>${esc(s.context.line)}</span></div>`
     : '';
-  const rows = s.details.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+  const rows = s.details.map(([k, v]) => `<dt title="${esc(k)}">${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
   const open = s.canOpen ? `<button class="link" data-action="open" data-id="${esc(s.id)}">Open transcript</button>` : '';
   const handoffTarget = s.agent === 'claude' ? 'Antigravity' : 'Claude';
   const handoffBtn = `<button class="link handoff-btn" data-action="handoff" data-id="${esc(s.id)}">📋 Handoff to ${handoffTarget}</button>`;
