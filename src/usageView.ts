@@ -4,9 +4,27 @@ import { renderBody } from './render';
 import { ViewModel } from './viewModel';
 
 export type ViewMessage = {
-  type: 'ready' | 'refresh' | 'install' | 'open' | 'handoff' | 'saveHandoff' | 'filter' | 'dispatch';
+  type:
+    | 'ready'
+    | 'refresh'
+    | 'install'
+    | 'open'
+    | 'handoff'
+    | 'saveHandoff'
+    | 'filter'
+    | 'dispatch'
+    | 'setMode'
+    | 'startPipeline'
+    | 'advancePipeline'
+    | 'pausePipeline'
+    | 'resumePipeline'
+    | 'cancelPipeline'
+    | 'installMcp'
+    | 'sendStepToTerminal';
   id?: string;
   filter?: 'all' | 'claude' | 'antigravity';
+  mode?: 'monitor' | 'conductor' | 'mesh';
+  recipeId?: string;
 };
 
 const STYLE = `
@@ -31,6 +49,42 @@ h1, h2 { margin: 0; font-weight: 600; }
 .track.time span { background: var(--muted); opacity: .75; }
 .track.time.solo { height: 6px; }
 .track.thin { height: 4px; }
+
+.mode-tabs { display: flex; gap: 4px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.mode-btn { flex: 1; font-size: 11px; padding: 5px 8px; border-radius: 4px; background: var(--track); color: var(--muted); border: 1px solid transparent; cursor: pointer; text-align: center; }
+.mode-btn:hover { color: var(--fg); }
+.mode-btn.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); font-weight: 600; }
+
+.conductor-panel { margin-top: 4px; }
+.pipeline-active { padding: 12px; border-radius: 6px; background: rgba(76, 143, 224, 0.08); border: 1px solid rgba(76, 143, 224, 0.3); margin-bottom: 14px; }
+.pipe-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.pipe-status { font-size: 10px; text-transform: uppercase; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+.pipe-status.running { background: rgba(76, 143, 224, 0.2); color: #4c8fe0; }
+.pipe-status.paused { background: rgba(215, 164, 11, 0.2); color: #d7a40b; }
+.pipe-status.completed { background: rgba(63, 166, 107, 0.2); color: #3fa66b; }
+.step-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.step-card { padding: 8px 10px; border-radius: 4px; background: var(--track); border: 1px solid var(--line); border-left: 3px solid transparent; font-size: 12px; }
+.step-card.step-running { border-left-color: #4c8fe0; background: rgba(76, 143, 224, 0.12); }
+.step-card.step-completed { border-left-color: #3fa66b; opacity: .85; }
+.step-card.step-paused { border-left-color: #d7a40b; }
+.step-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px; }
+.step-title { font-weight: 600; font-size: 12px; }
+.step-instruction { color: var(--muted); font-size: 11px; margin-top: 3px; }
+.pipe-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+
+.recipe-list { display: flex; flex-direction: column; gap: 8px; }
+.recipe-card { padding: 10px 12px; border-radius: 6px; background: var(--track); border: 1px solid var(--line); }
+.recipe-card h3 { font-size: 12px; margin: 0 0 4px; }
+.recipe-card p { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+
+.mesh-panel { margin-top: 4px; }
+.mesh-status-card { padding: 10px 12px; border-radius: 6px; background: rgba(142, 68, 173, 0.08); border: 1px solid rgba(142, 68, 173, 0.25); margin-bottom: 12px; }
+.mesh-peers { display: flex; gap: 8px; margin: 8px 0; }
+.peer-badge { display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--track); }
+.peer-indicator { width: 6px; height: 6px; border-radius: 50%; background: #3fa66b; }
+.mesh-log { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.mesh-msg { padding: 8px; border-radius: 4px; background: var(--track); border: 1px solid var(--line); font-size: 11px; }
+.mesh-msg-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin-bottom: 2px; }
 
 .quota, .level-ok { --accent: var(--ok); }
 .level-warn { --accent: var(--warn); }
@@ -159,7 +213,13 @@ window.addEventListener('message', (e) => {
 });
 root.addEventListener('click', (e) => {
   const b = e.target.closest('[data-action]');
-  if (b) vscode.postMessage({ type: b.dataset.action, id: b.dataset.id, filter: b.dataset.filter });
+  if (b) vscode.postMessage({
+    type: b.dataset.action,
+    id: b.dataset.id,
+    filter: b.dataset.filter,
+    mode: b.dataset.mode,
+    recipeId: b.dataset.recipeId
+  });
 });
 vscode.postMessage({ type: 'ready' });
 `;

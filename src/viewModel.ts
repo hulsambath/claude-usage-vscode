@@ -2,6 +2,7 @@ import { basename } from 'node:path';
 import { estimateRemaining, projectPace } from './estimate';
 import { formatClock, formatDuration, formatTokens } from './format';
 import { generateHandoffPrompt } from './handoff';
+import { AgentMeshMessage, OrchestratorMode, Pipeline, PipelineRecipe } from './orchestrator/types';
 import { AgentType, SessionView, UsageSnapshot, totalTokens } from './types';
 
 export type Level = 'ok' | 'warn' | 'crit';
@@ -93,9 +94,18 @@ export interface SessionVM {
   handoffPrompt?: string;
 }
 
+export interface OrchestratorVM {
+  mode: OrchestratorMode;
+  activePipeline?: Pipeline;
+  recipes: Array<{ id: string; title: string; description: string; stepCount: number }>;
+  meshMessages: AgentMeshMessage[];
+  mcpServerInstalled?: boolean;
+}
+
 export interface ViewModel {
   quota: QuotaVM;
   sessions: SessionVM[];
+  orchestrator?: OrchestratorVM;
 }
 
 const level = (pct: number, warnAt: number): Level => (pct >= 95 ? 'crit' : pct >= warnAt ? 'warn' : 'ok');
@@ -452,7 +462,18 @@ function buildSession(v: SessionView, now: number): SessionVM {
   };
 }
 
-export function buildViewModel(snap: UsageSnapshot, warnAt: number, filter: AgentType | 'all' = 'all'): ViewModel {
+export function buildViewModel(
+  snap: UsageSnapshot,
+  warnAt: number,
+  filter: AgentType | 'all' = 'all',
+  orchestratorOptions?: {
+    mode?: OrchestratorMode;
+    activePipeline?: Pipeline;
+    recipes?: PipelineRecipe[];
+    meshMessages?: AgentMeshMessage[];
+    mcpInstalled?: boolean;
+  },
+): ViewModel {
   const filteredSessions =
     filter === 'claude'
       ? snap.sessions.filter((s) => s.agent !== 'antigravity')
@@ -460,5 +481,24 @@ export function buildViewModel(snap: UsageSnapshot, warnAt: number, filter: Agen
         ? snap.sessions.filter((s) => s.agent === 'antigravity')
         : snap.sessions;
 
-  return { quota: buildQuota(snap, warnAt, filter), sessions: filteredSessions.map((s) => buildSession(s, snap.takenAt)) };
+  const orchestrator: OrchestratorVM | undefined = orchestratorOptions
+    ? {
+        mode: orchestratorOptions.mode || 'monitor',
+        activePipeline: orchestratorOptions.activePipeline,
+        recipes: (orchestratorOptions.recipes || []).map((r) => ({
+          id: r.id,
+          title: r.title,
+          description: r.description,
+          stepCount: r.steps.length,
+        })),
+        meshMessages: orchestratorOptions.meshMessages || [],
+        mcpServerInstalled: orchestratorOptions.mcpInstalled,
+      }
+    : undefined;
+
+  return {
+    quota: buildQuota(snap, warnAt, filter),
+    sessions: filteredSessions.map((s) => buildSession(s, snap.takenAt)),
+    orchestrator,
+  };
 }

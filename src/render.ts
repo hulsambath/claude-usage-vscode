@@ -1,4 +1,4 @@
-import { AgentCardVM, QuotaVM, SessionVM, ViewModel } from './viewModel';
+import { AgentCardVM, OrchestratorVM, QuotaVM, SessionVM, ViewModel, formatAgo } from './viewModel';
 
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -256,7 +256,146 @@ function renderSession(s: SessionVM): string {
   </article>`;
 }
 
+function renderConductorPanel(orch?: OrchestratorVM): string {
+  if (!orch) return '<p class="empty">Conductor not initialized.</p>';
+  const pipe = orch.activePipeline;
+
+  if (pipe) {
+    const curStep = pipe.steps[pipe.currentStepIndex];
+    const stepsHtml = pipe.steps
+      .map((s, idx) => {
+        const icon =
+          s.status === 'completed' ? '✓' : s.status === 'running' ? '●' : s.status === 'paused' ? '⏸' : '○';
+        const agentBadge = `<span class="badge ${s.agent}">${s.agent === 'claude' ? 'Claude' : 'Antigravity'}</span>`;
+        return `<div class="step-card step-${s.status}">
+          <div class="step-top">
+            <span class="step-title">${icon} Step ${idx + 1}: ${esc(s.title)}</span>
+            ${agentBadge}
+          </div>
+          <p class="step-instruction">${esc(s.instruction)}</p>
+          ${
+            s.filesTouched && s.filesTouched.length > 0
+              ? `<div class="files-tag">📁 ${s.filesTouched.length} files modified</div>`
+              : ''
+          }
+        </div>`;
+      })
+      .join('');
+
+    const isRunning = pipe.status === 'running';
+    const isPaused = pipe.status === 'paused';
+    const isCompleted = pipe.status === 'completed';
+
+    const actionBtns: string[] = [];
+    if (curStep && !isCompleted) {
+      actionBtns.push(
+        `<button class="btn-primary" data-action="sendStepToTerminal">🚀 Send to Terminal</button>`,
+      );
+      actionBtns.push(
+        `<button class="btn-subtle" data-action="advancePipeline">▶️ Advance Step</button>`,
+      );
+    }
+    if (isRunning) {
+      actionBtns.push(`<button class="btn-subtle" data-action="pausePipeline">⏸️ Pause</button>`);
+    } else if (isPaused) {
+      actionBtns.push(`<button class="btn-primary" data-action="resumePipeline">▶️ Resume</button>`);
+    }
+    actionBtns.push(`<button class="btn-subtle" data-action="cancelPipeline">✖ Cancel</button>`);
+
+    return `<div class="conductor-panel">
+      <div class="pipeline-active">
+        <div class="pipe-head">
+          <h2>${esc(pipe.title)}</h2>
+          <span class="pipe-status ${pipe.status}">${pipe.status}</span>
+        </div>
+        <p class="meta">${esc(pipe.description)}</p>
+        <div class="step-list">${stepsHtml}</div>
+        <div class="pipe-actions">${actionBtns.join('')}</div>
+      </div>
+    </div>`;
+  }
+
+  const recipeCards = orch.recipes
+    .map(
+      (r) => `<div class="recipe-card">
+        <h3>${esc(r.title)}</h3>
+        <p>${esc(r.description)} (${r.stepCount} steps)</p>
+        <button class="btn-primary" data-action="startPipeline" data-recipe-id="${esc(r.id)}">🚀 Start Pipeline</button>
+      </div>`,
+    )
+    .join('');
+
+  return `<div class="conductor-panel">
+    <div class="list-head">
+      <h2>Workflow Recipes</h2>
+    </div>
+    <div class="recipe-list">
+      ${recipeCards}
+    </div>
+  </div>`;
+}
+
+function renderMeshPanel(orch?: OrchestratorVM): string {
+  if (!orch) return '<p class="empty">Mesh not initialized.</p>';
+
+  const msgs = orch.meshMessages.slice(-10).reverse();
+  const msgsHtml =
+    msgs.length > 0
+      ? msgs
+          .map(
+            (m) => `<div class="mesh-msg">
+              <div class="mesh-msg-head">
+                <span>[${esc(m.type.toUpperCase())}] ${esc(String(m.fromAgent))} ➔ ${esc(String(m.toAgent))}</span>
+                <span>${formatAgo(Date.now() - m.timestamp)}</span>
+              </div>
+              <strong>${esc(m.subject)}</strong>
+              <p>${esc(m.content)}</p>
+            </div>`,
+          )
+          .join('')
+      : '<p class="empty">No recent messages in Agent Mesh. Agents can delegate tasks via MCP tools.</p>';
+
+  return `<div class="mesh-panel">
+    <div class="mesh-status-card">
+      <div class="pipe-head">
+        <h2>🌐 Agent Mesh Network</h2>
+        <span class="badge ${orch.mcpServerInstalled ? 'claude' : 'antigravity'}">${orch.mcpServerInstalled ? 'MCP Configured' : 'MCP Ready'}</span>
+      </div>
+      <p class="meta">Autonomous peer-to-peer MCP communication between Claude Code & Antigravity.</p>
+      <div class="mesh-peers">
+        <div class="peer-badge"><span class="peer-indicator"></span> Claude Code</div>
+        <div class="peer-badge"><span class="peer-indicator"></span> Antigravity</div>
+      </div>
+      <div class="bridge-btns">
+        <button class="btn-primary" data-action="installMcp">⚙️ Configure MCP in Agents</button>
+        <button class="btn-subtle" data-action="dispatch">💬 Send Peer Message</button>
+      </div>
+    </div>
+    <div class="list-head">
+      <h2>Live Mesh Activity</h2>
+      <button class="link" data-action="refresh">Refresh</button>
+    </div>
+    <div class="mesh-log">${msgsHtml}</div>
+  </div>`;
+}
+
 export function renderBody(vm: ViewModel): string {
+  const currentMode = vm.orchestrator?.mode || 'monitor';
+
+  const modeTabs = `<div class="mode-tabs">
+    <button class="mode-btn${currentMode === 'monitor' ? ' active' : ''}" data-action="setMode" data-mode="monitor">📊 Monitor</button>
+    <button class="mode-btn${currentMode === 'conductor' ? ' active' : ''}" data-action="setMode" data-mode="conductor">🎼 Conductor</button>
+    <button class="mode-btn${currentMode === 'mesh' ? ' active' : ''}" data-action="setMode" data-mode="mesh">🌐 MCP Mesh</button>
+  </div>`;
+
+  if (currentMode === 'conductor') {
+    return `${modeTabs}${renderConductorPanel(vm.orchestrator)}`;
+  }
+
+  if (currentMode === 'mesh') {
+    return `${modeTabs}${renderMeshPanel(vm.orchestrator)}`;
+  }
+
   const emptyText =
     vm.quota.agentFilter === 'antigravity'
       ? 'No Antigravity conversations in the last 5 hours.'
@@ -276,7 +415,8 @@ export function renderBody(vm: ViewModel): string {
       </div>`
     : '';
 
-  return `${renderQuota(vm.quota)}
+  return `${modeTabs}
+  ${renderQuota(vm.quota)}
   <div class="list-head">
     <h2>Conversations</h2>
     <button class="link" data-action="refresh">Refresh</button>

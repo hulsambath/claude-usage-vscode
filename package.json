@@ -1,8 +1,8 @@
 {
   "name": "claude-usage-monitor",
-  "displayName": "Claude Usage Monitor",
-  "description": "Local per-conversation Claude Code and Antigravity token usage, quota monitoring, and cross-agent context handoff bridge in the status bar and sidebar.",
-  "version": "0.5.0",
+  "displayName": "Claude & Antigravity Agent Orchestrator",
+  "description": "Multi-agent orchestrator & usage monitor for Claude Code and Antigravity: Conductor pipelines, MCP agent mesh, and cross-session context bridges.",
+  "version": "0.6.0",
   "publisher": "hulsambath",
   "repository": {
     "type": "git",
@@ -56,6 +56,30 @@
         "title": "Handoff to Antigravity (from Claude Code)",
         "category": "AI Usage",
         "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "claudeUsage.setMode",
+        "title": "Switch Mode (Monitor / Conductor / MCP Mesh)",
+        "category": "AI Orchestrator",
+        "icon": "$(layers)"
+      },
+      {
+        "command": "claudeUsage.startPipeline",
+        "title": "Start Orchestrator Workflow Pipeline",
+        "category": "AI Orchestrator",
+        "icon": "$(play)"
+      },
+      {
+        "command": "claudeUsage.advancePipeline",
+        "title": "Advance to Next Pipeline Step",
+        "category": "AI Orchestrator",
+        "icon": "$(debug-step-over)"
+      },
+      {
+        "command": "claudeUsage.installMcpMesh",
+        "title": "Configure Agent Mesh MCP Server in Claude & Antigravity",
+        "category": "AI Orchestrator",
+        "icon": "$(plug)"
       },
       {
         "command": "claudeUsage.saveHandoff",

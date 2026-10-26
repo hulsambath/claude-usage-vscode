@@ -8,6 +8,10 @@ import { antigravityPaths, defaultAntigravityRoot } from './antigravityPaths';
 import { Collector } from './collector';
 import { focusFirst } from './focus';
 import { generateDispatchMessage, generateHandoffPrompt, saveHandoffFile } from './handoff';
+import { ConductorEngine } from './orchestrator/conductor';
+import { installMcpMeshConfig } from './orchestrator/mcpInstaller';
+import { defaultMeshStatePath, readMeshState } from './orchestrator/meshState';
+import { AgentMeshMessage, OrchestratorMode } from './orchestrator/types';
 import { defaultClaudeRoot, paths } from './paths';
 import { bridgeCommand, pickNodeBinary, planStatusLineInstall } from './settingsPlan';
 import { UsageStatusBar } from './statusBar';
@@ -22,10 +26,14 @@ export function activate(context: vscode.ExtensionContext): void {
   const agyP = antigravityPaths(agyRoot);
   const agyCollector = existsSync(agyRoot) ? new AntigravityCollector(agyRoot) : undefined;
   const collector = new Collector(root, undefined, agyCollector);
+  const conductor = new ConductorEngine();
   const statusBar = new UsageStatusBar();
   const log = vscode.window.createOutputChannel('AI Usage & Context Monitor');
   let latest: UsageSnapshot | undefined;
   let currentFilter: AgentType | 'all' = 'all';
+  let currentMode: OrchestratorMode = 'monitor';
+  let meshMessages: AgentMeshMessage[] = [];
+  let mcpInstalled = false;
 
   const findSession = async (sessionId?: string): Promise<SessionView | undefined> => {
     if (!latest || latest.sessions.length === 0) return undefined;
@@ -223,6 +231,92 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   };
 
+  const sendStepToTerminal = async () => {
+    const pipe = conductor.getActivePipeline();
+    const cur = conductor.getCurrentStep();
+    if (!pipe || !cur) return;
+
+    const previous = pipe.steps.slice(0, pipe.currentStepIndex);
+    const prompt = conductor.formatPromptForStep(cur, previous);
+    await vscode.env.clipboard.writeText(prompt);
+
+    const matchingSessions = latest?.sessions.filter((s) => (s.agent || 'claude') === cur.agent) || [];
+    let term: vscode.Terminal | undefined;
+    if (matchingSessions.length > 0) {
+      term = await findTerminalForSession(matchingSessions[0]);
+    }
+    if (!term) term = vscode.window.activeTerminal;
+
+    if (term) {
+      term.sendText(prompt, false);
+      term.show(true);
+      void vscode.window.showInformationMessage(
+        `Step ${pipe.currentStepIndex + 1} (${cur.title}) sent to ${cur.agent === 'claude' ? 'Claude' : 'Antigravity'} terminal! Press Enter to run.`,
+      );
+    } else {
+      void vscode.window.showInformationMessage(
+        `Step ${pipe.currentStepIndex + 1} prompt copied to clipboard! Paste into ${cur.agent === 'claude' ? 'Claude' : 'Antigravity'} terminal.`,
+      );
+    }
+  };
+
+  const startPipeline = async (recipeId?: string) => {
+    let recId = recipeId;
+    if (!recId) {
+      const recipes = conductor.getRecipes();
+      const items = recipes.map((r) => ({
+        label: r.title,
+        description: `${r.steps.length} steps`,
+        detail: r.description,
+        recipeId: r.id,
+      }));
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select an Orchestrator Workflow Recipe to run',
+      });
+      if (!picked) return;
+      recId = picked.recipeId;
+    }
+
+    const pipe = conductor.createPipelineFromRecipe(recId);
+    if (!pipe) return;
+    conductor.startActivePipeline();
+    currentMode = 'conductor';
+    await refresh();
+    await sendStepToTerminal();
+  };
+
+  const advancePipeline = async () => {
+    const { nextStep, finished } = conductor.advanceStep();
+    if (finished) {
+      void vscode.window.showInformationMessage('🎉 Conductor Pipeline completed all steps!');
+    } else if (nextStep) {
+      void vscode.window.showInformationMessage(
+        `Pipeline advanced to Step ${conductor.getActivePipeline()!.currentStepIndex + 1}: ${nextStep.title}`,
+      );
+      if (nextStep.status === 'running') {
+        await sendStepToTerminal();
+      }
+    }
+    await refresh();
+  };
+
+  const resumePipeline = async () => {
+    const cur = conductor.resumePipeline();
+    if (cur) {
+      await sendStepToTerminal();
+    }
+    await refresh();
+  };
+
+  const installMcp = async () => {
+    const res = await installMcpMeshConfig(context.extensionPath);
+    mcpInstalled = res.claudeUpdated || res.antigravityUpdated;
+    void vscode.window.showInformationMessage(
+      `Agent Mesh MCP server configured! (${res.claudeUpdated ? 'Claude ' : ''}${res.antigravityUpdated ? 'Antigravity' : ''})`,
+    );
+    await refresh();
+  };
+
   const onMessage = (m: ViewMessage) => {
     if (m.type === 'refresh') void refresh();
     if (m.type === 'install') void vscode.commands.executeCommand('claudeUsage.installBridge');
@@ -234,6 +328,23 @@ export function activate(context: vscode.ExtensionContext): void {
       currentFilter = m.filter || 'all';
       void refresh();
     }
+    if (m.type === 'setMode') {
+      currentMode = m.mode || 'monitor';
+      void refresh();
+    }
+    if (m.type === 'startPipeline') void startPipeline(m.recipeId);
+    if (m.type === 'advancePipeline') void advancePipeline();
+    if (m.type === 'pausePipeline') {
+      conductor.pausePipeline();
+      void refresh();
+    }
+    if (m.type === 'resumePipeline') void resumePipeline();
+    if (m.type === 'cancelPipeline') {
+      conductor.cancelPipeline();
+      void refresh();
+    }
+    if (m.type === 'sendStepToTerminal') void sendStepToTerminal();
+    if (m.type === 'installMcp') void installMcp();
   };
 
   // The same usage view lives in the left activity bar and the right secondary side bar.
@@ -249,7 +360,38 @@ export function activate(context: vscode.ExtensionContext): void {
       const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
       const snap = await collector.collect(folders, config().get<'workspace' | 'all'>('scope', 'workspace'), Date.now());
       latest = snap;
-      const vm = buildViewModel(snap, config().get<number>('warnAt', 80), currentFilter);
+
+      try {
+        const meshState = await readMeshState();
+        meshMessages = meshState.messages;
+      } catch {
+        // Non-fatal
+      }
+
+      const stepCheck = conductor.checkSessionProgress(snap.sessions);
+      if (stepCheck.readyToAdvance) {
+        if (stepCheck.step?.autoAdvance) {
+          const { nextStep, finished } = conductor.advanceStep(undefined, stepCheck.files);
+          if (finished) {
+            void vscode.window.showInformationMessage('🎉 Conductor Pipeline completed all steps!');
+          } else if (nextStep && nextStep.status === 'running') {
+            void sendStepToTerminal();
+          }
+        } else {
+          conductor.pausePipeline();
+          void vscode.window.showInformationMessage(
+            `Step ${conductor.getActivePipeline()!.currentStepIndex + 1} finished! Awaiting approval to proceed to next step.`,
+          );
+        }
+      }
+
+      const vm = buildViewModel(snap, config().get<number>('warnAt', 80), currentFilter, {
+        mode: currentMode,
+        activePipeline: conductor.getActivePipeline(),
+        recipes: conductor.getRecipes(),
+        meshMessages,
+        mcpInstalled,
+      });
       for (const v of views) v.update(vm);
       statusBar.update(vm, snap);
     } catch (e) {
@@ -270,6 +412,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // Watchers for fast reactions
   let watcher: FSWatcher | undefined;
   let agyWatcher: FSWatcher | undefined;
+  let meshWatcher: FSWatcher | undefined;
   let debounce: NodeJS.Timeout | undefined;
 
   const ensureWatchers = () => {
@@ -293,6 +436,17 @@ export function activate(context: vscode.ExtensionContext): void {
         log.appendLine(`antigravity watch failed: ${String(e)}`);
       }
     }
+    const meshFile = defaultMeshStatePath();
+    if (!meshWatcher && existsSync(meshFile)) {
+      try {
+        meshWatcher = watch(meshFile, () => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(refresh, 500);
+        });
+      } catch (e) {
+        log.appendLine(`mesh watch failed: ${String(e)}`);
+      }
+    }
   };
   ensureWatchers();
   const watchRetry = setInterval(ensureWatchers, 60_000);
@@ -300,6 +454,7 @@ export function activate(context: vscode.ExtensionContext): void {
     dispose: () => {
       watcher?.close();
       agyWatcher?.close();
+      meshWatcher?.close();
       clearInterval(watchRetry);
       if (debounce) clearTimeout(debounce);
     },
@@ -318,6 +473,25 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('claudeUsage.handoffToClaude', () => copyHandoffTo('claude')),
     vscode.commands.registerCommand('claudeUsage.handoffToAntigravity', () => copyHandoffTo('antigravity')),
     vscode.commands.registerCommand('claudeUsage.saveHandoff', (id?: string) => saveHandoff(id)),
+    vscode.commands.registerCommand('claudeUsage.setMode', async (mode?: OrchestratorMode) => {
+      if (mode) {
+        currentMode = mode;
+      } else {
+        const picked = await vscode.window.showQuickPick(
+          [
+            { label: '📊 Monitor', description: 'Dual-agent token & quota tracking', mode: 'monitor' as const },
+            { label: '🎼 Conductor', description: 'Multi-step pipeline orchestrator', mode: 'conductor' as const },
+            { label: '🌐 MCP Mesh', description: 'Autonomous agent-to-agent MCP network', mode: 'mesh' as const },
+          ],
+          { placeHolder: 'Select Orchestrator Mode' },
+        );
+        if (picked) currentMode = picked.mode;
+      }
+      await refresh();
+    }),
+    vscode.commands.registerCommand('claudeUsage.startPipeline', (recipeId?: string) => startPipeline(recipeId)),
+    vscode.commands.registerCommand('claudeUsage.advancePipeline', advancePipeline),
+    vscode.commands.registerCommand('claudeUsage.installMcpMesh', installMcp),
     vscode.commands.registerCommand('claudeUsage.show', async () => {
       if (await focusFirst(['claudeUsage.sideView', 'claudeUsage.view'], (c) => vscode.commands.executeCommand(c))) return;
       const choice = await vscode.window.showWarningMessage(
